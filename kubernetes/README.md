@@ -107,7 +107,7 @@ helm upgrade --install nanobot-k8s nanobot/nanobot-k8s-monitoring -n nanobot \
   --set credentials.existingSecret=nanobot-k8s-credentials
 ```
 
-- O Nanobot gera esses comandos já preenchidos: **Admin > Kubernetes Clusters**, botão de instalação do agente (ícone de download) do cluster.
+- O Nanobot gera esses comandos já preenchidos: **Admin > Kubernetes Clusters > Agent Install** (provedor, endpoint, chaves e opções do agente).
 - Atualizações: `helm repo update nanobot` e o mesmo `helm upgrade --install`. Versão fixa do chart: `--version 0.3.1`.
 - Sem o repositório helm: `helm upgrade --install nanobot-k8s https://raw.githubusercontent.com/amopromo/nanobot-agent/main/charts/nanobot-k8s-monitoring-0.3.1.tgz ...` ou, com o repositório clonado, `kubernetes/helm/nanobot-k8s-monitoring`.
 

@@ -9,7 +9,7 @@ Agentes do Nanobot DevOps Utils: código, binários e chart helm.
 | [`charts/`](charts) | Repositório helm do agente Kubernetes |
 
 O Nanobot gera os comandos de instalação dos dois agentes já preenchidos: **Servers > Agent Install** e
-**Admin > Kubernetes Clusters** (botão de instalação do cluster).
+**Admin > Kubernetes Clusters > Agent Install**.
 
 ```bash
 # agente dos servidores (Linux x86-64)
