@@ -74,6 +74,20 @@ type PodSampleRow struct {
 	CPUPctLimit         *float64  `parquet:"cpu_pct_limit,optional"`
 	MemPctRequest       *float64  `parquet:"mem_pct_request,optional"`
 	MemPctLimit         *float64  `parquet:"mem_pct_limit,optional"`
+	// Pod Pending sem nó: a mensagem do agendador (ex.: "0/3 nodes are available: 3 Insufficient cpu.")
+	Message *string `parquet:"message,optional"`
+}
+
+// HPASampleRow é o estado de um HorizontalPodAutoscaler a cada coleta, ligado ao workload que ele escala.
+type HPASampleRow struct {
+	TS              time.Time `parquet:"ts,timestamp(microsecond:local)"`
+	WorkloadID      int64     `parquet:"workload_id"`
+	NamespaceID     int64     `parquet:"namespace_id"`
+	Name            string    `parquet:"name"`
+	MinReplicas     int64     `parquet:"min_replicas"`
+	MaxReplicas     int64     `parquet:"max_replicas"`
+	CurrentReplicas int64     `parquet:"current_replicas"`
+	DesiredReplicas int64     `parquet:"desired_replicas"`
 }
 
 type NodeSampleRow struct {
@@ -117,6 +131,7 @@ type Tables struct {
 	Pods        *Table[PodRow]
 	PodSamples  *Table[PodSampleRow]
 	NodeSamples *Table[NodeSampleRow]
+	HPASamples  *Table[HPASampleRow]
 	Logs        *Table[LogRow]
 }
 
@@ -129,13 +144,14 @@ func newTables() *Tables {
 		Pods:        newTable("pods", true, func(r *PodRow) time.Time { return r.FirstSeen }, nil),
 		PodSamples:  newTable("pod_samples", true, func(r *PodSampleRow) time.Time { return r.TS }, nil),
 		NodeSamples: newTable("node_samples", true, func(r *NodeSampleRow) time.Time { return r.TS }, nil),
+		HPASamples:  newTable("hpa_samples", true, func(r *HPASampleRow) time.Time { return r.TS }, nil),
 		// Logs ficam em um arquivo por hora: juntar o dia inteiro baixaria e subiria de novo um volume grande
 		Logs: newTable("logs", false, func(r *LogRow) time.Time { return r.TS }, func(r *LogRow) int { return len(r.Message) + 64 }),
 	}
 }
 
 func (t *Tables) all() []anyTable {
-	return []anyTable{t.Clusters, t.Namespaces, t.Workloads, t.Nodes, t.Pods, t.PodSamples, t.NodeSamples, t.Logs}
+	return []anyTable{t.Clusters, t.Namespaces, t.Workloads, t.Nodes, t.Pods, t.PodSamples, t.NodeSamples, t.HPASamples, t.Logs}
 }
 
 func ptr[T any](v T) *T { return &v }

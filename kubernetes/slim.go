@@ -1,6 +1,7 @@
 package main
 
 import (
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -14,6 +15,8 @@ func slimObject(obj any) (any, error) {
 		return slimPod(o), nil
 	case *corev1.Node:
 		return slimNode(o), nil
+	case *autoscalingv2.HorizontalPodAutoscaler:
+		return slimHPA(o), nil
 	}
 	return obj, nil
 }
@@ -88,11 +91,39 @@ func slimPod(p *corev1.Pod) *corev1.Pod {
 		out.Labels = map[string]string{"pod-template-hash": h}
 	}
 	for _, c := range p.Status.Conditions {
-		if c.Type == corev1.PodReady {
-			out.Status.Conditions = []corev1.PodCondition{{Type: c.Type, Status: c.Status}}
+		switch {
+		case c.Type == corev1.PodReady:
+			out.Status.Conditions = append(out.Status.Conditions, corev1.PodCondition{Type: c.Type, Status: c.Status})
+		case c.Type == corev1.PodScheduled && c.Status != corev1.ConditionTrue:
+			// Pod sem nó: o motivo (Unschedulable) e a mensagem do agendador (falta de CPU/memória no cluster)
+			out.Status.Conditions = append(out.Status.Conditions, corev1.PodCondition{Type: c.Type, Status: c.Status,
+				Reason: c.Reason, Message: truncate(c.Message, maxSchedulingMessage)})
 		}
 	}
 	return out
+}
+
+// Mensagem do agendador guardada por pod (com muitos nós ela lista os motivos de cada grupo de nós)
+const maxSchedulingMessage = 512
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+func slimHPA(h *autoscalingv2.HorizontalPodAutoscaler) *autoscalingv2.HorizontalPodAutoscaler {
+	return &autoscalingv2.HorizontalPodAutoscaler{
+		TypeMeta:   h.TypeMeta,
+		ObjectMeta: slimMeta(h.ObjectMeta),
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: h.Spec.ScaleTargetRef, MinReplicas: h.Spec.MinReplicas, MaxReplicas: h.Spec.MaxReplicas,
+		},
+		Status: autoscalingv2.HorizontalPodAutoscalerStatus{
+			CurrentReplicas: h.Status.CurrentReplicas, DesiredReplicas: h.Status.DesiredReplicas,
+		},
+	}
 }
 
 func slimNode(n *corev1.Node) *corev1.Node {

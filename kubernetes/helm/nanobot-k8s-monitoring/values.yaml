@@ -31,6 +31,10 @@ collection:
   flushInterval: 60s    # gravação no storage (atraso máximo dos dados no Nanobot)
   maintenanceInterval: 10m # junta os arquivos de cada flush (por hora e por dia) e aplica a retenção
   summaryConcurrency: 8 # nós consultados em paralelo (summary do kubelet)
+  # Mudança de estado de pod/HPA (caiu, não pronto, CrashLoopBackOff, Pending sem nó, escalou) dispara uma coleta e um
+  # envio na hora, com o uso de CPU/memória da última coleta; reactiveMinInterval: intervalo mínimo entre duas coletas
+  reactive: true
+  reactiveMinInterval: 10s
 
 # Namespaces ignorados: os pods deles não entram nas telas nem nos logs, só nos totais dos nós (requests, pods).
 # Lista vazia ([]) coleta todos.
@@ -42,8 +46,9 @@ logs:
   excludeNamespaces: []
   maxLineBytes: 16384
 
-# Dias guardados no storage: o agente apaga os mais antigos (0: não apaga)
-retentionDays: 30
+# Retenção: 0 (padrão) o agente não apaga nada e quem apaga os dias antigos é o clean_logs.py do Nanobot
+# (--k8s-days / K8S_RETENTION_DAYS). Maior que 0: o próprio agente apaga os dias mais antigos.
+retentionDays: 0
 
 # emptyDir em /data: arquivos esperando o storage voltar e a área da compactação (uma hora de logs por vez)
 bufferSizeLimit: 2Gi

@@ -12,6 +12,8 @@ data:
   FLUSH_INTERVAL: {{ .Values.collection.flushInterval | quote }}
   MAINTENANCE_INTERVAL: {{ .Values.collection.maintenanceInterval | quote }}
   RETENTION_DAYS: {{ .Values.retentionDays | quote }}
+  REACTIVE: {{ .Values.collection.reactive | quote }}
+  REACTIVE_MIN_INTERVAL: {{ .Values.collection.reactiveMinInterval | quote }}
   SUMMARY_CONCURRENCY: {{ .Values.collection.summaryConcurrency | quote }}
   EXCLUDE_NAMESPACES: {{ join "," .Values.excludeNamespaces | quote }}
   LOGS_ENABLED: {{ .Values.logs.enabled | quote }}

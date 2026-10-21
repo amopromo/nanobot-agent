@@ -285,3 +285,41 @@ func TestRedact(t *testing.T) {
 		}
 	}
 }
+
+// Arquivos gravados antes da coluna message (agente 0.3.x) entram na compactação junto com os novos.
+func TestMergeOldPodSamples(t *testing.T) {
+	type oldPodSample struct {
+		TS          time.Time `parquet:"ts,timestamp(microsecond:local)"`
+		PodID       int64     `parquet:"pod_id"`
+		WorkloadID  *int64    `parquet:"workload_id,optional"`
+		NamespaceID int64     `parquet:"namespace_id"`
+		Phase       string    `parquet:"phase"`
+		Ready       bool      `parquet:"ready"`
+		Restarts    int64     `parquet:"restarts"`
+		Reason      *string   `parquet:"reason,optional"`
+		CPUUsageM   *float64  `parquet:"cpu_usage_m,optional"`
+	}
+	dir := t.TempDir()
+	ts := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	old := filepath.Join(dir, "old.parquet")
+	if err := parquet.WriteFile(old, []oldPodSample{{TS: ts, PodID: 1, NamespaceID: 9, Phase: "Running", Ready: true, CPUUsageM: ptr(12.5)}}); err != nil {
+		t.Fatal(err)
+	}
+	cur := filepath.Join(dir, "new.parquet")
+	if err := parquet.WriteFile(cur, []PodSampleRow{{TS: ts.Add(time.Minute), PodID: 2, NamespaceID: 9, Phase: "Pending",
+		Reason: ptr("Unschedulable"), Message: ptr("0/1 nodes are available: 1 Insufficient memory.")}}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "merged.parquet")
+	if err := newTables().PodSamples.merge(out, []string{old, cur}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := parquet.ReadFile[PodSampleRow](out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].PodID != 1 || rows[0].Message != nil || rows[0].CPUUsageM == nil || *rows[0].CPUUsageM != 12.5 ||
+		rows[1].Message == nil || *rows[1].Reason != "Unschedulable" {
+		t.Errorf("merge com o esquema antigo: %+v", rows)
+	}
+}

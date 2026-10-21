@@ -98,8 +98,13 @@ func run() error {
 	if err := col.Start(ctx); err != nil {
 		return err
 	}
-	slog.Info("agente iniciado", "cluster", cfg.ClusterName, "storage", cfg.ClusterPath(), "retention_days", cfg.RetentionDays,
-		"sample_interval", cfg.SampleInterval.String(), "logs", cfg.LogsEnabled)
+	retention := "nanobot (clean_logs.py)"
+	if cfg.RetentionDays > 0 {
+		retention = fmt.Sprintf("agent, %d days", cfg.RetentionDays)
+	}
+	slog.Info("agente iniciado", "cluster", cfg.ClusterName, "storage", cfg.ClusterPath(), "retention", retention,
+		"sample_interval", cfg.SampleInterval.String(), "flush_interval", cfg.FlushInterval.String(), "reactive", cfg.Reactive,
+		"logs", cfg.LogsEnabled)
 
 	go serveHealth(cfg, col, store)
 
@@ -109,11 +114,16 @@ func run() error {
 	defer sampleTick.Stop()
 	defer flushTick.Stop()
 	defer maintainTick.Stop()
+	lastSample := time.Now()
 	sample := func() {
 		if err := col.Sample(ctx); err != nil {
 			slog.Error("coleta", "err", err)
 		}
+		lastSample = time.Now()
 	}
+	// Coleta reativa: junta a rajada de mudanças (um rollout muda vários pods) e respeita o intervalo mínimo
+	var reactive <-chan time.Time
+	const burst = 2 * time.Second
 	maintain := func() {
 		// Em paralelo: juntar uma hora de logs pode levar mais que o intervalo da coleta
 		go func() {
@@ -136,6 +146,19 @@ func run() error {
 			return nil
 		case <-sampleTick.C:
 			sample()
+		case <-col.Changes():
+			if cfg.Reactive && reactive == nil {
+				reactive = time.After(max(burst, cfg.ReactiveMinGap-time.Since(lastSample)))
+			}
+		case <-reactive:
+			reactive = nil
+			if err := col.SampleReactive(ctx); err != nil {
+				slog.Error("coleta reativa", "err", err)
+			}
+			lastSample = time.Now()
+			if err := store.Flush(ctx); err != nil {
+				slog.Error("flush", "err", err, "spool_files", store.SpoolFiles())
+			}
 		case <-flushTick.C:
 			if err := store.Flush(ctx); err != nil {
 				slog.Error("flush", "err", err, "spool_files", store.SpoolFiles())

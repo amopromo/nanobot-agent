@@ -9,12 +9,14 @@ import (
 	"sync"
 	"time"
 
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	autoscalinglisters "k8s.io/client-go/listers/autoscaling/v2"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/metadata/metadatainformer"
@@ -39,15 +41,20 @@ type Collector struct {
 	rsets     cache.GenericLister
 	jobs      cache.GenericLister
 	cronjobs  cache.GenericLister
+	hpas      autoscalinglisters.HorizontalPodAutoscalerLister // nil: sem permissão ou sem a API autoscaling/v2
 	podInform cache.SharedIndexInformer
 
 	now          func() time.Time
 	fetchSummary func(ctx context.Context, node string) ([]byte, error)
 
-	mu           sync.Mutex
-	version      string          // versão do Kubernetes (dimensão do cluster)
-	terminalSeen map[string]bool // pods encerrados já registrados uma vez (não repete a cada coleta)
-	lastSampleOK time.Time
+	changes chan struct{} // mudanças de estado de pods/HPAs (coleta reativa); buffer 1: rajadas viram um aviso só
+
+	mu            sync.Mutex
+	lastSummaries map[string]*statsSummary // uso da última coleta completa (a reativa não consulta o kubelet)
+	lastTS        time.Time                // horário da última coleta: duas no mesmo segundo somariam os pods em dobro
+	version       string                   // versão do Kubernetes (dimensão do cluster)
+	terminalSeen  map[string]bool          // pods encerrados já registrados uma vez (não repete a cada coleta)
+	lastSampleOK  time.Time
 }
 
 type podRef struct {
@@ -79,6 +86,7 @@ func NewCollector(cfg *Config, cs kubernetes.Interface, mc metadata.Interface, s
 		podInform:    f.Core().V1().Pods().Informer(),
 		terminalSeen: map[string]bool{},
 		now:          time.Now,
+		changes:      make(chan struct{}, 1),
 	}
 	c.fetchSummary = func(ctx context.Context, node string) ([]byte, error) {
 		return cs.CoreV1().RESTClient().Get().Resource("nodes").Name(node).
@@ -88,6 +96,14 @@ func NewCollector(cfg *Config, cs kubernetes.Interface, mc metadata.Interface, s
 }
 
 func (c *Collector) Start(ctx context.Context) error {
+	// HPA é opcional: com o chart antigo (sem RBAC de autoscaling) ou um cluster sem autoscaling/v2, o informer
+	// nunca sincronizaria e o agente não subiria
+	if _, err := c.cs.AutoscalingV2().HorizontalPodAutoscalers("").List(ctx, metav1.ListOptions{Limit: 1}); err != nil {
+		slog.Warn("HPAs não serão coletados (sem acesso a autoscaling/v2 horizontalpodautoscalers)", "error", redact(err.Error()))
+	} else {
+		c.hpas = c.factory.Autoscaling().V2().HorizontalPodAutoscalers().Lister()
+	}
+	c.watchChanges()
 	c.factory.Start(ctx.Done())
 	c.meta.Start(ctx.Done())
 	for typ, ok := range c.factory.WaitForCacheSync(ctx.Done()) {
@@ -101,6 +117,59 @@ func (c *Collector) Start(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// Changes avisa quando o estado de um pod (fase, pronto, restarts, motivo, nó) ou de um HPA (réplicas) mudou.
+func (c *Collector) Changes() <-chan struct{} { return c.changes }
+
+func (c *Collector) notify() {
+	select {
+	case c.changes <- struct{}{}:
+	default: // já há um aviso pendente
+	}
+}
+
+func podState(obj any) string {
+	if t, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+		obj = t.Obj
+	}
+	p, ok := obj.(*corev1.Pod)
+	if !ok {
+		return ""
+	}
+	ready, restarts, reason, _ := podStatus(p)
+	return fmt.Sprintf("%s|%v|%d|%s|%s|%v", p.Status.Phase, ready, restarts, reason, p.Spec.NodeName, p.DeletionTimestamp != nil)
+}
+
+func hpaState(obj any) string {
+	h, ok := obj.(*autoscalingv2.HorizontalPodAutoscaler)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%d|%d|%d", h.Status.CurrentReplicas, h.Status.DesiredReplicas, h.Spec.MaxReplicas)
+}
+
+// watchChanges liga os avisos aos informers (a lista inicial não conta: é o estado que a primeira coleta já lê).
+func (c *Collector) watchChanges() {
+	handler := func(state func(any) string) cache.ResourceEventHandler {
+		return cache.ResourceEventHandlerDetailedFuncs{
+			AddFunc: func(obj any, initial bool) {
+				if !initial {
+					c.notify()
+				}
+			},
+			UpdateFunc: func(old, cur any) {
+				if state(old) != state(cur) {
+					c.notify()
+				}
+			},
+			DeleteFunc: func(any) { c.notify() },
+		}
+	}
+	c.podInform.AddEventHandler(handler(podState))
+	if c.hpas != nil {
+		c.factory.Autoscaling().V2().HorizontalPodAutoscalers().Informer().AddEventHandler(handler(hpaState))
+	}
 }
 
 // registerCluster grava a dimensão do cluster uma vez por dia, com a versão do Kubernetes do momento.
@@ -278,8 +347,26 @@ type nodeAlloc struct {
 }
 
 // Sample registra uma amostra de todos os pods e nós com o mesmo timestamp (agregação por workload no Nanobot).
+// Sample é a coleta completa: estado dos pods e nós e o uso pelo summary do kubelet.
 func (c *Collector) Sample(ctx context.Context) error {
+	return c.sample(ctx, true)
+}
+
+// SampleReactive é a coleta de uma mudança de estado: todos os pods (o mesmo horário para todos, como as telas e os
+// alertas esperam), com o uso da última coleta completa, sem consultar o kubelet.
+func (c *Collector) SampleReactive(ctx context.Context) error {
+	return c.sample(ctx, false)
+}
+
+func (c *Collector) sample(ctx context.Context, full bool) error {
 	ts := c.now().UTC().Truncate(time.Second)
+	c.mu.Lock()
+	if !ts.After(c.lastTS) {
+		c.mu.Unlock()
+		return nil
+	}
+	c.lastTS = ts
+	c.mu.Unlock()
 	cl := c.cfg.ClusterName
 
 	nodes, err := c.nodes.List(labels.Everything())
@@ -290,7 +377,17 @@ func (c *Collector) Sample(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	summaries := c.fetchSummaries(ctx, nodes)
+	var summaries map[string]*statsSummary
+	if full {
+		summaries = c.fetchSummaries(ctx, nodes)
+		c.mu.Lock()
+		c.lastSummaries = summaries
+		c.mu.Unlock()
+	} else {
+		c.mu.Lock()
+		summaries = c.lastSummaries
+		c.mu.Unlock()
+	}
 	c.registerCluster(ts)
 
 	podUsage := map[string]usage{}
@@ -357,10 +454,10 @@ func (c *Collector) Sample(ctx context.Context) error {
 		if pod.Spec.NodeName != "" {
 			nid = ptr(nodeID(cl, pod.Spec.NodeName))
 		}
-		ready, restarts, reason := podStatus(pod)
+		ready, restarts, reason, message := podStatus(pod)
 		podRows = append(podRows, PodSampleRow{
 			TS: ts, PodID: ref.id, WorkloadID: ref.workloadID, NamespaceID: ref.namespaceID, NodeID: nid,
-			Phase: string(pod.Status.Phase), Ready: ready, Restarts: restarts, Reason: strPtr(reason),
+			Phase: string(pod.Status.Phase), Ready: ready, Restarts: restarts, Reason: strPtr(reason), Message: strPtr(message),
 			CPUUsageM: u.cpuM, CPURequestM: positiveF(r.cpuReq), CPULimitM: positiveF(r.cpuLimOrZero()),
 			MemUsageBytes: u.memBytes, MemRequestBytes: positive(r.memReq), MemLimitBytes: positive(r.memLimOrZero()),
 			EphemeralUsageBytes: u.ephemeral,
@@ -404,6 +501,7 @@ func (c *Collector) Sample(ctx context.Context) error {
 
 	c.store.T.PodSamples.Append(podRows...)
 	c.store.T.NodeSamples.Append(nodeRows...)
+	c.store.T.HPASamples.Append(c.hpaRows(ts)...)
 
 	c.mu.Lock()
 	for uid := range c.terminalSeen {
@@ -415,6 +513,36 @@ func (c *Collector) Sample(ctx context.Context) error {
 	c.mu.Unlock()
 	slog.Debug("coleta", "pods", len(podRows), "nodes", len(nodeRows))
 	return nil
+}
+
+// hpaRows liga cada HPA ao workload que ele escala (o mesmo id dos pods do Deployment/StatefulSet).
+func (c *Collector) hpaRows(ts time.Time) []HPASampleRow {
+	if c.hpas == nil {
+		return nil
+	}
+	hpas, err := c.hpas.List(labels.Everything())
+	if err != nil {
+		slog.Warn("lista de HPAs", "error", err)
+		return nil
+	}
+	cl := c.cfg.ClusterName
+	rows := make([]HPASampleRow, 0, len(hpas))
+	for _, h := range hpas {
+		if c.cfg.ExcludeNS[h.Namespace] || h.Spec.ScaleTargetRef.Name == "" {
+			continue
+		}
+		var minReplicas int64 = 1
+		if h.Spec.MinReplicas != nil {
+			minReplicas = int64(*h.Spec.MinReplicas)
+		}
+		rows = append(rows, HPASampleRow{
+			TS: ts, WorkloadID: workloadID(cl, h.Namespace, h.Spec.ScaleTargetRef.Kind, h.Spec.ScaleTargetRef.Name),
+			NamespaceID: namespaceID(cl, h.Namespace), Name: h.Name,
+			MinReplicas: minReplicas, MaxReplicas: int64(h.Spec.MaxReplicas),
+			CurrentReplicas: int64(h.Status.CurrentReplicas), DesiredReplicas: int64(h.Status.DesiredReplicas),
+		})
+	}
+	return rows
 }
 
 func (c *Collector) LastSampleOK() time.Time {
@@ -498,15 +626,21 @@ func quantity(l corev1.ResourceList, name corev1.ResourceName, milli bool) int64
 }
 
 // podStatus devolve se está pronto, o total de restarts e o motivo mais útil (CrashLoopBackOff, OOMKilled...).
-func podStatus(p *corev1.Pod) (bool, int64, string) {
-	ready := false
+func podStatus(p *corev1.Pod) (ready bool, restarts int64, reason, message string) {
 	for _, cond := range p.Status.Conditions {
-		if cond.Type == corev1.PodReady {
+		switch cond.Type {
+		case corev1.PodReady:
 			ready = cond.Status == corev1.ConditionTrue
+		case corev1.PodScheduled:
+			// Sem nó que comporte o pod: o motivo é Unschedulable e a mensagem diz o que falta no cluster
+			if cond.Status == corev1.ConditionFalse && cond.Reason != "" {
+				reason, message = cond.Reason, cond.Message
+			}
 		}
 	}
-	var restarts int64
-	reason := p.Status.Reason
+	if p.Status.Reason != "" {
+		reason = p.Status.Reason
+	}
 	statuses := append(append([]corev1.ContainerStatus{}, p.Status.InitContainerStatuses...), p.Status.ContainerStatuses...)
 	for _, cs := range statuses {
 		restarts += int64(cs.RestartCount)
@@ -531,7 +665,7 @@ func podStatus(p *corev1.Pod) (bool, int64, string) {
 			}
 		}
 	}
-	return ready, restarts, reason
+	return ready, restarts, reason, message
 }
 
 func nodeReady(n *corev1.Node) bool {

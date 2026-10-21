@@ -11,10 +11,11 @@ O Nanobot lê os arquivos com o DuckDB (menu **Kubernetes**). O mesmo bucket ate
 
 ## Como coleta
 
-- Estado do cluster pelos informers (pods, nós, ReplicaSets, Jobs e CronJobs), para achar o dono de cada pod: ReplicaSet → **Deployment**, Job → **CronJob** e nó → **StaticPod**. O cache guarda só os campos usados (pods sem env, volumes, anotações etc.; nós sem a lista de imagens) e ReplicaSets, Jobs e CronJobs só com os metadados.
+- Estado do cluster pelos informers (pods, nós, ReplicaSets, Jobs, CronJobs e HorizontalPodAutoscalers), para achar o dono de cada pod: ReplicaSet → **Deployment**, Job → **CronJob** e nó → **StaticPod**. O cache guarda só os campos usados (pods sem env, volumes, anotações etc.; nós sem a lista de imagens) e ReplicaSets, Jobs e CronJobs só com os metadados.
 - Uso de CPU, memória e disco pelo summary do kubelet (`/api/v1/nodes/<nó>/proxy/stats/summary`), sem depender do metrics-server.
 - Logs pela API (`kubectl logs -f --timestamps`), um stream por container. Pods de CronJob que duram segundos são lidos até o fim mesmo depois de encerrados.
 - Coleta a cada `SAMPLE_INTERVAL` (60s), com o mesmo timestamp para todos os pods (o Nanobot soma por workload). Pod encerrado entra uma vez só.
+- **Reativo** (`collection.reactive`, ligado): uma mudança de estado de pod (fase, pronto, restarts, motivo como CrashLoopBackOff/OOMKilled/Unschedulable, nó) ou de HPA (réplicas) recebida pelos informers dispara na hora uma coleta de todos os pods, com o uso de CPU/memória da última coleta completa (o kubelet só é consultado no `SAMPLE_INTERVAL`), e o envio ao storage. Rajadas (um rollout) viram uma coleta só, e há no mínimo `collection.reactiveMinInterval` (10s) entre duas coletas.
 
 ## Onde os dados ficam
 
@@ -27,7 +28,8 @@ O Nanobot lê os arquivos com o DuckDB (menu **Kubernetes**). O mesmo bucket ate
 | `workloads` | dimensão | id, cluster_id, namespace_id, kind (Deployment, CronJob, StatefulSet, DaemonSet, Job, StaticPod...), name, first_seen |
 | `nodes` | dimensão | id, cluster_id, name, first_seen |
 | `pods` | dimensão | id, cluster_id, namespace_id, workload_id, name, uid, owner_kind, created_at, first_seen |
-| `pod_samples` | fato | ts, pod_id, workload_id, namespace_id, node_id, phase, ready, restarts, reason, cpu_usage_m, cpu_request_m, cpu_limit_m, mem_usage_bytes, mem_request_bytes, mem_limit_bytes, ephemeral_usage_bytes, cpu_pct_request, cpu_pct_limit, mem_pct_request, mem_pct_limit |
+| `pod_samples` | fato | ts, pod_id, workload_id, namespace_id, node_id, phase, ready, restarts, reason, cpu_usage_m, cpu_request_m, cpu_limit_m, mem_usage_bytes, mem_request_bytes, mem_limit_bytes, ephemeral_usage_bytes, cpu_pct_request, cpu_pct_limit, mem_pct_request, mem_pct_limit, message (mensagem do agendador do pod Pending sem nó, ex.: `0/3 nodes are available: 3 Insufficient cpu.`) |
+| `hpa_samples` | fato | ts, workload_id, namespace_id, name, min_replicas, max_replicas, current_replicas, desired_replicas |
 | `node_samples` | fato | ts, node_id, ready, unschedulable, cpu_*_m, mem_*_bytes, fs_capacity_bytes, fs_used_bytes, ephemeral_*_bytes, pods_count, pods_capacity |
 | `logs` | fato | ts, pod_id, workload_id, namespace_id, container, message |
 
@@ -36,7 +38,7 @@ O Nanobot lê os arquivos com o DuckDB (menu **Kubernetes**). O mesmo bucket ate
 - Horários em UTC. CPU em milicores, memória/disco em bytes. Request/limit nulo = não definido no pod.
 - **Gravação:** as linhas ficam num buffer em memória e a cada `FLUSH_INTERVAL` (60s) viram um arquivo por tabela. O arquivo é gravado primeiro no emptyDir `/data` (spool) e depois sobe; com o storage fora do ar, os arquivos esperam no spool (inclusive se o container reiniciar) e sobem em ordem quando ele voltar.
 - **Compactação** (a cada `MAINTENANCE_INTERVAL`, 10 min): a hora fechada vira um arquivo só (`hh=HH/c<stamp>.parquet`) e, nas tabelas que não são de logs, o dia fechado também (`dt=AAAA-MM-DD/c<stamp>.parquet`). O compactado substitui os arquivos com stamp menor ou igual, então quem lê nunca vê uma linha duas vezes, nem enquanto os antigos não foram apagados (eles saem na execução seguinte).
-- **Retenção:** o próprio agente apaga os dias mais antigos que `retentionDays` (30). O `clean_logs.py` do Nanobot não mexe no storage.
+- **Retenção:** por padrão o agente não apaga nada (`retentionDays: 0`); o `clean_logs.py` do Nanobot apaga os dias mais antigos que `--k8s-days` (ou `K8S_RETENTION_DAYS`), e a chave cadastrada no Nanobot precisa poder apagar. Com `retentionDays` maior que 0, o próprio agente apaga.
 - Senhas e chaves nunca aparecem nos logs do agente (o agente mascara antes de escrever).
 
 Consulta direta com o DuckDB:
@@ -108,8 +110,8 @@ helm upgrade --install nanobot-k8s nanobot/nanobot-k8s-monitoring -n nanobot \
 ```
 
 - O Nanobot gera esses comandos já preenchidos: **Admin > Kubernetes Clusters > Agent Install** (provedor, endpoint, chaves e opções do agente).
-- Atualizações: `helm repo update nanobot` e o mesmo `helm upgrade --install`. Versão fixa do chart: `--version 0.3.1`.
-- Sem o repositório helm: `helm upgrade --install nanobot-k8s https://raw.githubusercontent.com/amopromo/nanobot-agent/main/charts/nanobot-k8s-monitoring-0.3.1.tgz ...` ou, com o repositório clonado, `kubernetes/helm/nanobot-k8s-monitoring`.
+- Atualizações: `helm repo update nanobot` e o mesmo `helm upgrade --install`. Versão fixa do chart: `--version 0.4.0`. Sem o RBAC de HPA (chart anterior com a imagem nova), o agente avisa no log e segue sem coletar HPAs.
+- Sem o repositório helm: `helm upgrade --install nanobot-k8s https://raw.githubusercontent.com/amopromo/nanobot-agent/main/charts/nanobot-k8s-monitoring-0.4.0.tgz ...` ou, com o repositório clonado, `kubernetes/helm/nanobot-k8s-monitoring`.
 
 Com vários clusters, guarde um arquivo de values por cluster (ex.: `values-prod1.yaml` com `clusterName`, `storage.path` e `logs.excludeNamespaces`) e use `-f values-prod1.yaml`.
 
@@ -138,8 +140,10 @@ Sem `credentials.existingSecret`, o chart cria o Secret (`templates/secret.yaml`
 | `storage.path` | (obrigatório) | `s3://bucket/prefixo` (ou `gs://`, `r2://`), compartilhado entre os clusters |
 | `collection.sampleInterval` | `60s` | Coleta de uso/status |
 | `collection.flushInterval` | `60s` | Gravação no storage (atraso máximo dos dados no Nanobot) |
+| `collection.reactive` | `true` | Mudança de estado de pod/HPA: coleta e envio na hora |
+| `collection.reactiveMinInterval` | `10s` | Intervalo mínimo entre duas coletas reativas |
 | `collection.maintenanceInterval` | `10m` | Compactação das horas/dias fechados e retenção |
-| `retentionDays` | `30` | Dias guardados no storage; os mais antigos são apagados (`0`: não apaga) |
+| `retentionDays` | `0` | `0`: o agente não apaga (a retenção é do `clean_logs.py` do Nanobot). Maior que 0: o agente apaga os dias mais antigos |
 | `logs.enabled` | `true` | Coleta de logs |
 | `excludeNamespaces` | `[kube-system, kube-public, kube-node-lease]` | Namespaces ignorados (pods, workloads e logs); continuam nos totais dos nós. `[]` coleta todos |
 | `logs.namespaces` / `logs.excludeNamespaces` | `[]` | Namespaces com/sem coleta de logs |
@@ -147,7 +151,7 @@ Sem `credentials.existingSecret`, o chart cria o Secret (`templates/secret.yaml`
 | `bufferSizeLimit` | `2Gi` | emptyDir `/data`: spool com o storage fora do ar e área da compactação |
 | `resources` | req 50m/64Mi, limit 512Mi | O GC do Go trabalha abaixo de 85% do limit de memória |
 
-RBAC: somente leitura (`get/list/watch` em pods, nós, ReplicaSets, Jobs e CronJobs; `get` em `pods/log` e `nodes/proxy`). Uma réplica só (`strategy: Recreate`): duas gravariam as mesmas janelas.
+RBAC: somente leitura (`get/list/watch` em pods, nós, ReplicaSets, Jobs, CronJobs e HorizontalPodAutoscalers; `get` em `pods/log` e `nodes/proxy`). Uma réplica só (`strategy: Recreate`): duas gravariam as mesmas janelas.
 
 Cada container com log abre um stream na API: em clusters grandes, limite os namespaces de log (`logs.namespaces`/`logs.excludeNamespaces`).
 

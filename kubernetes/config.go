@@ -19,7 +19,9 @@ type Config struct {
 	SampleInterval     time.Duration
 	FlushInterval      time.Duration
 	MaintainInterval   time.Duration   // compactação dos arquivos de cada flush e retenção
-	RetentionDays      int             // dias guardados no storage (0: não apaga)
+	Reactive           bool            // mudança de estado de pod/HPA dispara uma coleta e um envio na hora
+	ReactiveMinGap     time.Duration   // intervalo mínimo entre duas coletas (protege o storage em rajadas)
+	RetentionDays      int             // dias guardados no storage (0, padrão: não apaga; a retenção é do clean_logs.py do Nanobot)
 	ExcludeNS          map[string]bool // namespaces ignorados (pods, workloads e logs); entram só no total dos nós
 	LogsEnabled        bool
 	LogNamespaces      map[string]bool // vazio: todos
@@ -52,6 +54,12 @@ func LoadConfig() (*Config, error) {
 	if c.FlushInterval, err = envDuration("FLUSH_INTERVAL", time.Minute); err != nil {
 		return nil, err
 	}
+	if c.Reactive, err = strconv.ParseBool(env("REACTIVE", "true")); err != nil {
+		return nil, fmt.Errorf("REACTIVE: %w", err)
+	}
+	if c.ReactiveMinGap, err = envDuration("REACTIVE_MIN_INTERVAL", 10*time.Second); err != nil {
+		return nil, err
+	}
 	if c.MaintainInterval, err = envDuration("MAINTENANCE_INTERVAL", 10*time.Minute); err != nil {
 		return nil, err
 	}
@@ -61,7 +69,7 @@ func LoadConfig() (*Config, error) {
 	if c.LogMaxLineBytes, err = strconv.Atoi(env("LOG_MAX_LINE_BYTES", "16384")); err != nil {
 		return nil, fmt.Errorf("LOG_MAX_LINE_BYTES: %w", err)
 	}
-	if c.RetentionDays, err = strconv.Atoi(env("RETENTION_DAYS", "30")); err != nil || c.RetentionDays < 0 {
+	if c.RetentionDays, err = strconv.Atoi(env("RETENTION_DAYS", "0")); err != nil || c.RetentionDays < 0 {
 		return nil, fmt.Errorf("RETENTION_DAYS inválido: %q", os.Getenv("RETENTION_DAYS"))
 	}
 	if c.SummaryConcurrency, err = strconv.Atoi(env("SUMMARY_CONCURRENCY", "8")); err != nil {

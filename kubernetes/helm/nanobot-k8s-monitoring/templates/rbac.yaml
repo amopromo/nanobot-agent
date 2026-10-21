@@ -1,4 +1,5 @@
-# Somente leitura: pods/logs, nós e o summary do kubelet (nodes/proxy), e os donos dos pods para achar o Deployment/CronJob
+# Somente leitura: pods/logs, nós e o summary do kubelet (nodes/proxy), os donos dos pods para achar o Deployment/CronJob
+# e os HPAs (réplicas atuais x máximo, para os alertas)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -17,6 +18,9 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

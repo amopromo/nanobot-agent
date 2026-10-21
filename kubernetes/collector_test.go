@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -134,9 +135,9 @@ func fakeSummary(c *Collector, node string, now time.Time) []byte {
 	return raw
 }
 
-func newTestCollector(t *testing.T, cfg *Config, creds *Credentials, created time.Time) (*Collector, *Store, *time.Time) {
+func newTestCollector(t *testing.T, cfg *Config, creds *Credentials, created time.Time, extra ...runtime.Object) (*Collector, *Store, *time.Time) {
 	store := openTestStore(t, cfg, creds)
-	cs := fake.NewClientset(testCluster(created)...)
+	cs := fake.NewClientset(append(testCluster(created), extra...)...)
 	scheme := metafake.NewTestScheme()
 	metav1.AddMetaToScheme(scheme)
 	mc := metafake.NewSimpleMetadataClient(scheme, testMetadata()...)
@@ -175,7 +176,7 @@ func TestWorkloadResolution(t *testing.T) {
 		t.Errorf("etcd-node-a: %s/%s, esperado StaticPod/etcd", k, n)
 	}
 	db, _ := col.pods.Pods("prod").Get("db-0")
-	if ready, restarts, reason := podStatus(db); ready || restarts != 5 || reason != "CrashLoopBackOff" {
+	if ready, restarts, reason, _ := podStatus(db); ready || restarts != 5 || reason != "CrashLoopBackOff" {
 		t.Errorf("status do db-0: ready=%v restarts=%d reason=%q", ready, restarts, reason)
 	}
 }
@@ -233,6 +234,56 @@ func TestSample(t *testing.T) {
 	}
 	if rows, _ := readTable[PodRow](t, store, "pods"); len(rows) != 14 {
 		t.Errorf("pods depois de um dia: %d, esperado 14", len(rows))
+	}
+}
+
+// HPA do Deployment api (2 de 4 réplicas) e um pod Pending sem nó por falta de CPU
+func TestHPAAndUnschedulable(t *testing.T) {
+	ctx := context.Background()
+	cfg, creds := testConfig(t)
+	minR := int32(1)
+	hpa := &autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "prod", Name: "api"},
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{MinReplicas: &minR, MaxReplicas: 4,
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "api"}},
+		Status: autoscalingv2.HorizontalPodAutoscalerStatus{CurrentReplicas: 2, DesiredReplicas: 3},
+	}
+	created := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	pending := mkPod("prod", "api-7d9f-x3", "", corev1.PodPending, owner("ReplicaSet", "api-7d9f"), res("250m", "256Mi", "500m", "512Mi"), created)
+	pending.Labels = map[string]string{"pod-template-hash": "7d9f"}
+	pending.Status.ContainerStatuses = nil
+	pending.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse,
+		Reason: "Unschedulable", Message: "0/2 nodes are available: 2 Insufficient cpu."}}
+	col, store, _ := newTestCollector(t, cfg, creds, created, hpa, pending)
+	if err := col.Sample(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	api := workloadID(cfg.ClusterName, "prod", "Deployment", "api")
+	hpas, _ := readTable[HPASampleRow](t, store, "hpa_samples")
+	if len(hpas) != 1 || hpas[0].WorkloadID != api || hpas[0].MaxReplicas != 4 || hpas[0].CurrentReplicas != 2 || hpas[0].DesiredReplicas != 3 {
+		t.Errorf("hpa_samples: %+v", hpas)
+	}
+	samples, _ := readTable[PodSampleRow](t, store, "pod_samples")
+	found := false
+	for _, s := range samples {
+		if s.PodID == podID(cfg.ClusterName, "uid-prod-api-7d9f-x3") {
+			found = true
+			if s.Reason == nil || *s.Reason != "Unschedulable" || s.Message == nil || !strings.Contains(*s.Message, "Insufficient cpu") ||
+				s.WorkloadID == nil || *s.WorkloadID != api {
+				t.Errorf("pod pendente: %+v", s)
+			}
+		}
+	}
+	if !found {
+		t.Error("pod pendente não coletado")
+	}
+	// O cache do informer guarda a condição de agendamento (slimPod)
+	p, _ := col.pods.Pods("prod").Get("api-7d9f-x3")
+	if _, _, reason, msg := podStatus(p); reason != "Unschedulable" || msg == "" {
+		t.Errorf("slimPod perdeu a condição PodScheduled: %q %q", reason, msg)
 	}
 }
 
@@ -338,4 +389,68 @@ func TestDemoData(t *testing.T) {
 		}
 	}
 	t.Logf("dados de demonstração em %s", cfg.ClusterPath())
+}
+
+// Mudança de estado de um pod avisa o loop principal; a coleta reativa traz o estado novo com o uso da coleta anterior
+func TestReactiveSample(t *testing.T) {
+	ctx := context.Background()
+	cfg, creds := testConfig(t)
+	start := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	col, store, now := newTestCollector(t, cfg, creds, start)
+	if err := col.Sample(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-col.Changes():
+		t.Fatal("a lista inicial não deveria avisar")
+	default:
+	}
+	p, _ := col.cs.CoreV1().Pods("prod").Get(ctx, "api-7d9f-x1", metav1.GetOptions{})
+	p.Status.Conditions[0].Status = corev1.ConditionFalse
+	p.Status.ContainerStatuses[0].Ready = false
+	p.Status.ContainerStatuses[0].RestartCount = 1
+	p.Status.ContainerStatuses[0].State = corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}
+	if _, err := col.cs.CoreV1().Pods("prod").UpdateStatus(ctx, p, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-col.Changes():
+	case <-time.After(5 * time.Second):
+		t.Fatal("mudança de estado do pod não avisou")
+	}
+	if err := col.SampleReactive(ctx); err != nil { // mesmo segundo da coleta completa: ignorada
+		t.Fatal(err)
+	}
+	*now = start.Add(10 * time.Second)
+	// o informer pode levar um instante para refletir o status novo no cache
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		cached, _ := col.pods.Pods("prod").Get("api-7d9f-x1")
+		if _, _, reason, _ := podStatus(cached); reason == "CrashLoopBackOff" || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := col.SampleReactive(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	samples, _ := readTable[PodSampleRow](t, store, "pod_samples")
+	byTS := map[time.Time]int{}
+	var reactive *PodSampleRow
+	for i, s := range samples {
+		byTS[s.TS]++
+		if s.TS.Equal(start.Add(10*time.Second)) && s.PodID == podID(cfg.ClusterName, "uid-prod-api-7d9f-x1") {
+			reactive = &samples[i]
+		}
+	}
+	// 5 pods ativos + 2 encerrados na primeira; 5 ativos na reativa (encerrados entram uma vez só)
+	if byTS[start] != 7 || byTS[start.Add(10*time.Second)] != 5 || len(byTS) != 2 {
+		t.Errorf("coletas por horário: %v", byTS)
+	}
+	if reactive == nil || reactive.Ready || reactive.Reason == nil || *reactive.Reason != "CrashLoopBackOff" || reactive.CPUUsageM == nil {
+		t.Errorf("coleta reativa do api-x1: %+v", reactive)
+	}
 }
