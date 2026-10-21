@@ -1,0 +1,10 @@
+# Teste local do agente Kubernetes (credenciais, kubeconfig): nunca versionar
+kubernetes/.local/
+.local/
+*.local.yaml
+credentials*.json
+kubeconfig
+# Binários compilados fora de server/bin
+/kubernetes/nanobot-k8s-monitoring
+/server/agent
+*.exe~

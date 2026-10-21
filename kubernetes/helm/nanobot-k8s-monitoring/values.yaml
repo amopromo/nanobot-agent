@@ -1,0 +1,63 @@
+image:
+  repository: amopromo/nanobot-k8s-agent
+  # Com uma tag fixa (ex.: 0.1.0), troque pullPolicy para IfNotPresent. Vazio: appVersion do chart
+  tag: latest
+  pullPolicy: Always
+
+# Nome do cluster: vira a pasta no storage e precisa ser igual ao cadastrado no Nanobot (Admin > Kubernetes)
+clusterName: ""
+
+storage:
+  # Bucket e prefixo compartilhados pelos clusters: s3://bucket/prefixo, gs://bucket/prefixo ou r2://bucket/prefixo
+  path: ""
+
+credentials:
+  # Secret já existente com a chave credentials.json (recomendado: fora do values)
+  existingSecret: ""
+  # Sem existingSecret, o chart cria o Secret com este JSON (o mesmo formato cadastrado no Nanobot).
+  # O agente precisa listar, ler, gravar e apagar no prefixo do storage.
+  json: |
+    {
+      "type": "s3",
+      "key_id": "",
+      "secret": "",
+      "region": "us-east-1",
+      "endpoint": "",
+      "url_style": ""
+    }
+
+collection:
+  sampleInterval: 60s   # coleta de uso/status de pods e nós
+  flushInterval: 60s    # gravação no storage (atraso máximo dos dados no Nanobot)
+  maintenanceInterval: 10m # junta os arquivos de cada flush (por hora e por dia) e aplica a retenção
+  summaryConcurrency: 8 # nós consultados em paralelo (summary do kubelet)
+
+# Namespaces ignorados: os pods deles não entram nas telas nem nos logs, só nos totais dos nós (requests, pods).
+# Lista vazia ([]) coleta todos.
+excludeNamespaces: [kube-system, kube-public, kube-node-lease]
+
+logs:
+  enabled: true
+  namespaces: []        # vazio: todos
+  excludeNamespaces: []
+  maxLineBytes: 16384
+
+# Dias guardados no storage: o agente apaga os mais antigos (0: não apaga)
+retentionDays: 30
+
+# emptyDir em /data: arquivos esperando o storage voltar e a área da compactação (uma hora de logs por vez)
+bufferSizeLimit: 2Gi
+logLevel: info
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 512Mi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""

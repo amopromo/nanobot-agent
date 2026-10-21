@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nanobot-k8s.fullname" . }}
+  labels:
+    {{- include "nanobot-k8s.labels" . | nindent 4 }}
+data:
+  CLUSTER_NAME: {{ required "clusterName é obrigatório" .Values.clusterName | quote }}
+  STORAGE_PATH: {{ required "storage.path é obrigatório (ex.: s3://bucket/nanobot-k8s)" .Values.storage.path | quote }}
+  CREDENTIALS_FILE: /etc/nanobot-k8s/credentials.json
+  SAMPLE_INTERVAL: {{ .Values.collection.sampleInterval | quote }}
+  FLUSH_INTERVAL: {{ .Values.collection.flushInterval | quote }}
+  MAINTENANCE_INTERVAL: {{ .Values.collection.maintenanceInterval | quote }}
+  RETENTION_DAYS: {{ .Values.retentionDays | quote }}
+  SUMMARY_CONCURRENCY: {{ .Values.collection.summaryConcurrency | quote }}
+  EXCLUDE_NAMESPACES: {{ join "," .Values.excludeNamespaces | quote }}
+  LOGS_ENABLED: {{ .Values.logs.enabled | quote }}
+  LOG_NAMESPACES: {{ join "," .Values.logs.namespaces | quote }}
+  LOG_EXCLUDE_NAMESPACES: {{ join "," .Values.logs.excludeNamespaces | quote }}
+  LOG_MAX_LINE_BYTES: {{ .Values.logs.maxLineBytes | quote }}
+  LOG_LEVEL: {{ .Values.logLevel | quote }}

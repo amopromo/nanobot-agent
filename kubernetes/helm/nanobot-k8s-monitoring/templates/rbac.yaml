@@ -1,0 +1,35 @@
+# Somente leitura: pods/logs, nós e o summary do kubelet (nodes/proxy), e os donos dos pods para achar o Deployment/CronJob
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "nanobot-k8s.fullname" . }}
+  labels:
+    {{- include "nanobot-k8s.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log", "nodes/proxy"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "nanobot-k8s.fullname" . }}
+  labels:
+    {{- include "nanobot-k8s.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "nanobot-k8s.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "nanobot-k8s.fullname" . }}
+    namespace: {{ .Release.Namespace }}

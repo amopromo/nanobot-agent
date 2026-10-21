@@ -1,0 +1,9 @@
+nanobot-k8s-monitoring instalado para o cluster "{{ .Values.clusterName }}".
+
+Dados em: {{ .Values.storage.path }}/{{ .Values.clusterName }}/ (retenção: {{ .Values.retentionDays }} dias)
+
+No Nanobot, cadastre o cluster em Admin > Kubernetes com o mesmo nome ({{ .Values.clusterName }}),
+o mesmo caminho do storage e o mesmo JSON de credenciais (ou uma chave só de leitura), e associe os grupos que podem ver os dados.
+
+Logs do agente:
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "nanobot-k8s.fullname" . }}

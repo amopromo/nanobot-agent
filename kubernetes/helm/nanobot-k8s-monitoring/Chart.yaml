@@ -1,0 +1,6 @@
+apiVersion: v2
+name: nanobot-k8s-monitoring
+description: Agente do Nanobot que coleta logs, uso de CPU/memória/disco e status dos pods e nós e grava em Parquet no S3/GCS/R2
+type: application
+version: 0.3.1
+appVersion: "0.3.1"
