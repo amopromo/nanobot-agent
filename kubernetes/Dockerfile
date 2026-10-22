@@ -1,6 +1,6 @@
 # nanobot-k8s-monitoring
-#   docker build -t <usuario>/nanobot-k8s-agent:0.4.0 kubernetes/
-#   docker push <usuario>/nanobot-k8s-agent:0.3.0
+#   docker build -t <usuario>/nanobot-k8s-agent:0.5.0 kubernetes/
+#   docker push <usuario>/nanobot-k8s-agent:0.5.0
 # Binário Go estático (sem CGO): a imagem final só tem ele e os certificados (distroless).
 FROM golang:1.26-trixie AS build
 ARG TARGETOS TARGETARCH
