@@ -539,6 +539,9 @@ func (s *Security) record(cycle time.Time, r scanResult) {
 	if r.out != nil {
 		row.DurationMS = r.out.DurationMS
 		row.OSFamily, row.OSName = strPtr(r.out.OSFamily), strPtr(r.out.OSName)
+		if r.out.OSFamily != "" {
+			row.OSEOSL = ptr(r.out.OSEOSL)
+		}
 		rows := make([]VulnerabilityRow, 0, len(r.out.Vulns))
 		for _, v := range r.out.Vulns {
 			switch v.Severity {

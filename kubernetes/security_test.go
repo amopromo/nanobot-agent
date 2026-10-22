@@ -81,7 +81,7 @@ func TestSecurityConfigNormalize(t *testing.T) {
 }
 
 const trivySample = `{
-  "Metadata": {"OS": {"Family": "debian", "Name": "12.7"}},
+  "Metadata": {"OS": {"Family": "debian", "Name": "12.7", "EOSL": true}},
   "Results": [
     {"Target": "app (debian 12.7)", "Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
       {"VulnerabilityID": "CVE-2024-0001", "PkgName": "openssl", "InstalledVersion": "3.0.1", "FixedVersion": "3.0.15",
@@ -102,7 +102,7 @@ func TestScanResultRoundTrip(t *testing.T) {
 	if err := parseTrivy([]byte(trivySample), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.OSFamily != "debian" || len(out.Vulns) != 2 {
+	if out.OSFamily != "debian" || !out.OSEOSL || len(out.Vulns) != 2 {
 		t.Fatalf("parse: %+v", out)
 	}
 	if v := out.Vulns[0]; *v.Score != 9.8 || v.Fixed != "3.0.15" || v.Target != "debian 12.7 (OS packages)" || v.Type != "debian" {
@@ -335,7 +335,7 @@ func TestSecurityCycle(t *testing.T) {
 		}
 	}
 	for _, sc := range scans {
-		if sc.Status != "ok" || sc.Critical != 1 || sc.High != 1 || *sc.OSFamily != "debian" {
+		if sc.Status != "ok" || sc.Critical != 1 || sc.High != 1 || *sc.OSFamily != "debian" || sc.OSEOSL == nil || !*sc.OSEOSL {
 			t.Fatalf("image_scans: %+v", sc)
 		}
 	}

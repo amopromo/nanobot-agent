@@ -41,6 +41,7 @@ type scanOutput struct {
 	DurationMS int64      `json:"duration_ms"`
 	OSFamily   string     `json:"os_family,omitempty"`
 	OSName     string     `json:"os_name,omitempty"`
+	OSEOSL     bool       `json:"os_eosl,omitempty"` // versão do SO fora de suporte (sem correções novas)
 	Vulns      []scanVuln `json:"vulns"`
 }
 
@@ -67,6 +68,7 @@ type trivyReport struct {
 		OS *struct {
 			Family string `json:"Family"`
 			Name   string `json:"Name"`
+			EOSL   bool   `json:"EOSL"`
 		} `json:"OS"`
 	} `json:"Metadata"`
 	Results []struct {
@@ -243,7 +245,7 @@ func parseTrivy(raw []byte, out *scanOutput) error {
 		return err
 	}
 	if r.Metadata.OS != nil {
-		out.OSFamily, out.OSName = r.Metadata.OS.Family, r.Metadata.OS.Name
+		out.OSFamily, out.OSName, out.OSEOSL = r.Metadata.OS.Family, r.Metadata.OS.Name, r.Metadata.OS.EOSL
 	}
 	for _, res := range r.Results {
 		// Pacotes do SO: o Trivy usa o hostname (o pod do Job) como nome do alvo do rootfs

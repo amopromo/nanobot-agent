@@ -153,6 +153,7 @@ type ImageScanRow struct {
 	Low        int64     `parquet:"low"`
 	OSFamily   *string   `parquet:"os_family,optional"`
 	OSName     *string   `parquet:"os_name,optional"`
+	OSEOSL     *bool     `parquet:"os_eosl,optional"` // versão do SO da imagem fora de suporte (Trivy EOSL)
 }
 
 // VulnerabilityRow é uma vulnerabilidade encontrada numa varredura (ts e digest iguais aos da ImageScanRow).

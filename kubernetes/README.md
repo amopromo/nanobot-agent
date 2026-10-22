@@ -65,7 +65,7 @@ RBAC a mais: um `Role` só no namespace do agente para criar, ler e apagar Jobs 
 | `node_samples` | fato | ts, node_id, ready, unschedulable, cpu_*_m, mem_*_bytes, fs_capacity_bytes, fs_used_bytes, ephemeral_*_bytes, pods_count, pods_capacity |
 | `logs` | fato | ts, pod_id, workload_id, namespace_id, container, message |
 | `image_workloads` | fato | ts (início do ciclo), digest, image, namespace_id, workload_id, container, pods: quem usava cada imagem no ciclo |
-| `image_scans` | fato | ts, cycle_ts, digest, image, node, status (ok, error, oom, timeout, skipped), error, duration_ms, vulns, critical, high, medium, low, os_family, os_name |
+| `image_scans` | fato | ts, cycle_ts, digest, image, node, status (ok, error, oom, timeout, skipped), error, duration_ms, vulns, critical, high, medium, low, os_family, os_name, os_eosl (versão do SO fora de suporte) |
 | `vulnerabilities` | fato | ts e digest (os da varredura), vuln_id (CVE/GHSA), severity, score (maior CVSS), title, description, url, pkg, installed, fixed, status, target, pkg_path (arquivo), type (debian, jar, pip...), published |
 
 - Os dados fixos (cluster, namespace, workload, nó, pod) ficam só nas dimensões; os fatos guardam apenas os ids. Os ids são hashes estáveis (FNV-64) dos nomes (o pod usa o uid), então não duplicam entre reinícios.
