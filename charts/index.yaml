@@ -2,8 +2,19 @@ apiVersion: v1
 entries:
   nanobot-k8s-monitoring:
   - apiVersion: v2
+    appVersion: 0.6.1
+    created: "2026-10-22T15:25:18.651836658-03:00"
+    description: Agente do Nanobot que coleta logs, uso de CPU/memória/disco e status
+      dos pods e nós, varre as imagens em uso (Trivy) e grava em Parquet no S3/GCS/R2
+    digest: c9dc744b0a43bd50220d31c08158965a229f162966186fed3b2c3b92bf692e69
+    name: nanobot-k8s-monitoring
+    type: application
+    urls:
+    - https://raw.githubusercontent.com/amopromo/nanobot-agent/main/charts/nanobot-k8s-monitoring-0.6.1.tgz
+    version: 0.6.1
+  - apiVersion: v2
     appVersion: 0.6.0
-    created: "2026-10-22T14:40:40.869148706-03:00"
+    created: "2026-10-22T15:25:18.651521951-03:00"
     description: Agente do Nanobot que coleta logs, uso de CPU/memória/disco e status
       dos pods e nós, varre as imagens em uso (Trivy) e grava em Parquet no S3/GCS/R2
     digest: 12fa758f852f260b994e93bf5ea8920641a2a9676bfbf6580ef8626c60de4a81
@@ -14,7 +25,7 @@ entries:
     version: 0.6.0
   - apiVersion: v2
     appVersion: 0.5.0
-    created: "2026-10-22T14:40:40.868742086-03:00"
+    created: "2026-10-22T15:25:18.650930879-03:00"
     description: Agente do Nanobot que coleta logs, uso de CPU/memória/disco e status
       dos pods e nós, varre as imagens em uso (Trivy) e grava em Parquet no S3/GCS/R2
     digest: fffb2a731eab2cdb41663346a118df656cb3b23a8d4f1dc9575a9fe01e54dcd0
@@ -25,7 +36,7 @@ entries:
     version: 0.5.0
   - apiVersion: v2
     appVersion: 0.4.0
-    created: "2026-10-22T14:40:40.868116442-03:00"
+    created: "2026-10-22T15:25:18.65041391-03:00"
     description: Agente do Nanobot que coleta logs, uso de CPU/memória/disco e status
       dos pods e nós e grava em Parquet no S3/GCS/R2
     digest: a8a1655dee6709a8c81a86f2e66a6f15603af50115eaf0e7efb3a4b995328d05
@@ -36,7 +47,7 @@ entries:
     version: 0.4.0
   - apiVersion: v2
     appVersion: 0.3.1
-    created: "2026-10-22T14:40:40.867525439-03:00"
+    created: "2026-10-22T15:25:18.649941709-03:00"
     description: Agente do Nanobot que coleta logs, uso de CPU/memória/disco e status
       dos pods e nós e grava em Parquet no S3/GCS/R2
     digest: c5df8c035365d1bd4616c92f6a0628497177d203e4b0b08894cd60009d6a0a83
@@ -45,4 +56,4 @@ entries:
     urls:
     - https://raw.githubusercontent.com/amopromo/nanobot-agent/main/charts/nanobot-k8s-monitoring-0.3.1.tgz
     version: 0.3.1
-generated: "2026-10-22T14:40:40.866589627-03:00"
+generated: "2026-10-22T15:25:18.649326891-03:00"
