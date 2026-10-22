@@ -201,6 +201,9 @@ func ownerOf(l cache.GenericLister, ns, name string) (*metav1.OwnerReference, bo
 	return metav1.GetControllerOf(m), true
 }
 
+// isScanPod: pod de um Job de varredura do próprio agente (entra só nos totais do nó, como os namespaces ignorados).
+func isScanPod(pod *corev1.Pod) bool { return pod.Labels["app.kubernetes.io/name"] == scanLabelApp }
+
 // workloadOf sobe pelos donos do pod: ReplicaSet -> Deployment, Job -> CronJob e Node -> StaticPod.
 func (c *Collector) workloadOf(pod *corev1.Pod) (kind, name string) {
 	ref := metav1.GetControllerOf(pod)
@@ -431,7 +434,7 @@ func (c *Collector) sample(ctx context.Context, full bool) error {
 			a.pods++
 		}
 
-		if c.cfg.ExcludeNS[pod.Namespace] {
+		if c.cfg.ExcludeNS[pod.Namespace] || isScanPod(pod) {
 			continue
 		}
 		ref := c.RegisterPod(pod, ts)

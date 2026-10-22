@@ -160,6 +160,9 @@ type Credentials struct {
 	URLStyle     string `json:"url_style"` // vhost ou path (MinIO costuma usar path)
 	UseSSL       *bool  `json:"use_ssl"`
 	AccountID    string `json:"account_id"` // só r2
+	// Criptografia dos arquivos no storage (filecrypt.go): 32 bytes em base64. As anteriores só leem os arquivos antigos
+	EncryptionKey          string   `json:"encryption_key"`
+	PreviousEncryptionKeys []string `json:"previous_encryption_keys"`
 }
 
 func LoadCredentials(path string) (*Credentials, error) {
@@ -178,6 +181,11 @@ func LoadCredentials(path string) (*Credentials, error) {
 	case "s3", "gcs", "r2":
 	default:
 		return nil, fmt.Errorf("type %q não suportado (s3, gcs ou r2)", c.Type)
+	}
+	if c.EncryptionKey != "" {
+		if _, err := parseEncryptionKey(c.EncryptionKey); err != nil {
+			return nil, fmt.Errorf("encryption_key em %s: %w", path, err)
+		}
 	}
 	return &c, nil
 }

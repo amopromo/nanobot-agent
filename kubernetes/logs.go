@@ -65,7 +65,7 @@ func (lm *LogManager) Run(ctx context.Context) {
 
 func (lm *LogManager) onPod(ctx context.Context, obj any) {
 	pod, ok := obj.(*corev1.Pod)
-	if !ok || !lm.wanted(pod.Namespace) {
+	if !ok || !lm.wanted(pod.Namespace) || isScanPod(pod) {
 		return
 	}
 	statuses := append(append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...)

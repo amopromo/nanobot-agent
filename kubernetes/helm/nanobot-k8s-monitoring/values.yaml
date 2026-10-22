@@ -15,7 +15,8 @@ credentials:
   # Secret já existente com a chave credentials.json (recomendado: fora do values)
   existingSecret: ""
   # Sem existingSecret, o chart cria o Secret com este JSON (o mesmo formato cadastrado no Nanobot).
-  # O agente precisa listar, ler, gravar e apagar no prefixo do storage.
+  # O agente precisa listar, ler, gravar e apagar no prefixo do storage. encryption_key (opcional, 32 bytes em base64:
+  # openssl rand -base64 32): os arquivos vão criptografados (AES-256-GCM) para o storage; a mesma chave no Nanobot.
   json: |
     {
       "type": "s3",
@@ -23,7 +24,8 @@ credentials:
       "secret": "",
       "region": "us-east-1",
       "endpoint": "",
-      "url_style": ""
+      "url_style": "",
+      "encryption_key": ""
     }
 
 collection:

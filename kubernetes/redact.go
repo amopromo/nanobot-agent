@@ -9,8 +9,8 @@ import (
 // Os erros do DuckDB repetem a conexão do catálogo (password=...) e o trecho do CREATE SECRET. Os logs do agente
 // também são coletados (inclusive os dele), então as senhas saem de todo log antes de serem escritas.
 var (
-	secretKVRe    = regexp.MustCompile(`(?i)((?:password|secret|key_id|session_token)\s*[=:]\s*)('[^']*'|"[^"]*"|[^\s'",)]+)`)
-	secretSQLRe   = regexp.MustCompile(`(?i)((?:password|secret|key_id|session_token)\s+)('[^']*'|"[^"]*")`)
+	secretKVRe    = regexp.MustCompile(`(?i)((?:password|secret|key_id|session_token|encryption_key)\s*[=:]\s*)('[^']*'|"[^"]*"|[^\s'",)]+)`)
+	secretSQLRe   = regexp.MustCompile(`(?i)((?:password|secret|key_id|session_token|encryption_key)\s+)('[^']*'|"[^"]*")`)
 	urlPasswordRe = regexp.MustCompile(`(://[^:/@\s]+:)[^@\s]+@`)
 )
 

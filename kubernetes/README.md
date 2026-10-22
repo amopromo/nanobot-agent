@@ -8,6 +8,8 @@ Agente em Go que roda dentro do cluster Kubernetes (um pod por cluster) e grava 
 - **nós**: CPU, memória e disco usados x requeridos x allocatable, quantidade de pods;
 - **vulnerabilidades das imagens em uso** (Trivy), quando ligado no cadastro do cluster no Nanobot ([abaixo](#varredura-de-vulnerabilidades)).
 
+Com `encryption_key` nas credenciais, todos os arquivos vão criptografados para o storage ([Criptografia dos arquivos](#criptografia-dos-arquivos)).
+
 O Nanobot lê os arquivos com o DuckDB (menu **Kubernetes**). O mesmo bucket atende vários clusters, cada um na sua pasta. O cluster só precisa alcançar o bucket: não há banco de dados no caminho.
 
 ## Como coleta
@@ -103,7 +105,8 @@ O Secret tem um `credentials.json`. O **mesmo formato** é cadastrado no Nanobot
   "region": "us-east-1",
   "endpoint": "",
   "url_style": "",
-  "use_ssl": true
+  "use_ssl": true,
+  "encryption_key": "base64 de 32 bytes (opcional, agente 0.6.0+)"
 }
 ```
 
@@ -113,7 +116,18 @@ O Secret tem um `credentials.json`. O **mesmo formato** é cadastrado no Nanobot
 | `gcs` | Google Cloud Storage com **chave HMAC** (Cloud Storage > Settings > Interoperability), pela API S3 do GCS. O JSON de service account não é aceito. `storage.path` com `gs://` |
 | `r2` | Cloudflare R2: `account_id`, `key_id` e `secret`. `storage.path` com `r2://` |
 
-**Permissões no bucket:** o agente precisa listar, ler, gravar e apagar objetos no prefixo do `storage.path` (ele mesmo compacta e aplica a retenção). Para o Nanobot basta listar e ler: pode ser outra chave, só de leitura.
+**Permissões no bucket:** o agente precisa listar, ler, gravar e apagar objetos no prefixo do `storage.path` (ele mesmo compacta e aplica a retenção). Para o Nanobot basta listar e ler: pode ser outra chave, só de leitura (com a varredura de vulnerabilidades, ele também grava em `_config/`).
+
+### Criptografia dos arquivos
+
+Com `encryption_key` (32 bytes aleatórios em base64, ex.: `openssl rand -base64 32`, ou o botão **Generate** no cadastro do cluster no Nanobot), o agente criptografa **cada arquivo** com AES-256-GCM antes de subir (logs, uso, vulnerabilidades e o estado da varredura) e descriptografa ao baixar (compactação). Quem tem acesso ao bucket sem a chave não lê nada e não consegue alterar um arquivo sem que a leitura falhe (o GCM autentica cada bloco; um arquivo cortado ou com blocos trocados não abre). A configuração da varredura gravada pelo Nanobot também vai criptografada, e o agente recusa uma configuração sem criptografia: com acesso só ao bucket, ninguém liga ou agenda a varredura.
+
+- A mesma chave vai no cadastro do cluster no Nanobot (que guarda as credenciais criptografadas no banco e descriptografa os arquivos num cache local, `K8S_FILE_CACHE_DIR`). O **Agent Install** do Nanobot já inclui a chave no comando.
+- **Guarde uma cópia da chave**: sem ela os dados não podem ser lidos.
+- Troca de chave: a chave nova em `encryption_key` e a antiga em `previous_encryption_keys` (lista), que só lê os arquivos já gravados (no Nanobot, gravar uma chave nova no cadastro faz isso sozinho).
+- Arquivos gravados antes da chave continuam sendo lidos; o `k8s_encrypt_storage.py` do Nanobot criptografa os que ficaram (`--dry-run` lista antes). Os dias novos já saem criptografados.
+- Formato (o mesmo do `app/core/k8s_crypto.py` do Nanobot): cabeçalho de 32 bytes (`NBE1`, id da chave, prefixo do nonce, tamanho do bloco) e blocos de 1 MiB com AES-256-GCM; detalhes em [filecrypt.go](filecrypt.go). A criptografia nativa do Parquet não é usada porque a do parquet-go e a do DuckDB não leem os arquivos uma da outra.
+- O Parquet aberto só existe no emptyDir `/data` do pod (spool e compactação), dentro do cluster.
 
 ## Instalação (helm, a partir do repositório git)
 
@@ -228,7 +242,7 @@ Para versionar, publique também uma tag fixa (ex.: `amopromo/nanobot-k8s-agent:
 
 ```bash
 cd kubernetes
-go test ./...      # spool, compactação, retenção, coleta e varredura (clientset fake), transformações do cache, senhas nos logs
+go test ./...      # spool, compactação, retenção, criptografia, coleta e varredura (clientset fake), transformações do cache, senhas nos logs
 # os mesmos testes num bucket de verdade:
 TEST_STORAGE=s3://bucket/testes TEST_CREDENTIALS=./credentials.json go test ./...
 # 6h de dados sintéticos para testar as telas do Nanobot (DEMO_END=2026-09-10T12:00:00Z gera dados antigos)

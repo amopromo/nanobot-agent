@@ -315,6 +315,31 @@ func TestExcludeNamespaces(t *testing.T) {
 	}
 }
 
+// Pods dos Jobs de varredura ficam fora da coleta (só os totais do nó)
+func TestScanPodsIgnored(t *testing.T) {
+	cfg, creds := testConfig(t)
+	scan := mkPod("nanobot", "nanobot-scan-abc-x", "node-a", corev1.PodRunning, owner("Job", "nanobot-scan-abc"), res("50m", "128Mi", "", ""),
+		time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC))
+	scan.Labels = map[string]string{"app.kubernetes.io/name": scanLabelApp, "job-name": "nanobot-scan-abc"}
+	col, store, _ := newTestCollector(t, cfg, creds, time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC), scan)
+	if err := col.Sample(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cached, err := col.pods.Pods("nanobot").Get("nanobot-scan-abc-x")
+	if err != nil || !isScanPod(cached) {
+		t.Fatalf("label do Job de varredura no cache: %v %v", err, cached.Labels)
+	}
+	if err := store.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pods, _ := readTable[PodRow](t, store, "pods")
+	for _, p := range pods {
+		if strings.HasPrefix(p.Name, "nanobot-scan-") {
+			t.Fatal("pod do Job de varredura coletado")
+		}
+	}
+}
+
 func TestSlimPod(t *testing.T) {
 	p := testCluster(time.Now())[2].(*corev1.Pod)
 	p.Annotations = map[string]string{"big": strings.Repeat("x", 1000)}

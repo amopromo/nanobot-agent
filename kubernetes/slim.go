@@ -90,6 +90,13 @@ func slimPod(p *corev1.Pod) *corev1.Pod {
 	if h := p.Labels["pod-template-hash"]; h != "" {
 		out.Labels = map[string]string{"pod-template-hash": h}
 	}
+	// Pod do Job de varredura de vulnerabilidades (security.go): fica de fora da coleta e dos logs
+	if p.Labels["app.kubernetes.io/name"] == scanLabelApp {
+		if out.Labels == nil {
+			out.Labels = map[string]string{}
+		}
+		out.Labels["app.kubernetes.io/name"] = scanLabelApp
+	}
 	for _, c := range p.Status.Conditions {
 		switch {
 		case c.Type == corev1.PodReady:

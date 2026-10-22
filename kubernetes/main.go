@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"syscall"
@@ -65,6 +66,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	encrypted := creds != nil && creds.EncryptionKey != ""
+	if encrypted {
+		if blob, err = newCryptBlob(blob, creds, filepath.Join(cfg.BufferDir, "crypt")); err != nil {
+			return fmt.Errorf("credenciais do storage: %w", err)
+		}
+	}
 	store, err := NewStore(cfg, blob)
 	if err != nil {
 		return err
@@ -107,7 +114,7 @@ func run() error {
 	}
 	slog.Info("agente iniciado", "cluster", cfg.ClusterName, "storage", cfg.ClusterPath(), "retention", retention,
 		"sample_interval", cfg.SampleInterval.String(), "flush_interval", cfg.FlushInterval.String(), "reactive", cfg.Reactive,
-		"logs", cfg.LogsEnabled, "security_scan", cfg.SecurityScan)
+		"logs", cfg.LogsEnabled, "security_scan", cfg.SecurityScan, "encrypted", encrypted)
 
 	go serveHealth(cfg, col, store)
 	if cfg.SecurityScan {
