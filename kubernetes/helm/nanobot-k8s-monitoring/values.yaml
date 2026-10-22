@@ -50,6 +50,36 @@ logs:
 # (--k8s-days / K8S_RETENTION_DAYS). Maior que 0: o próprio agente apaga os dias mais antigos.
 retentionDays: 0
 
+# Varredura de vulnerabilidades das imagens em uso (Trivy). Quem liga e agenda é o Nanobot (cadastro do cluster), que
+# grava <storage>/<cluster>/_config/security.json; aqui ficam só as imagens e os limites dos Jobs. Um Job por vez, no
+# namespace do agente e no nó onde a imagem já está (sem baixar do registry), apagado no fim.
+security:
+  enabled: true           # false: o agente ignora o _config/security.json (não cria Jobs e não precisa do Role)
+  trivyImage: aquasec/trivy:0.75.0
+  # Repositórios do banco do Trivy (vazio: mirror.gcr.io, público, e depois ghcr.io). Clusters sem internet: um
+  # registry interno com uma cópia do banco (ex.: harbor.local/aquasec/trivy-db:2)
+  dbRepository: ""
+  javaDbRepository: ""
+  imagesPerJob: 8         # imagens varridas em sequência por Job (o banco é baixado uma vez por Job)
+  imageTimeout: 5m
+  jobGap: 30s             # pausa entre dois Jobs
+  configInterval: 5m      # leitura da configuração gravada pelo Nanobot
+  # Limites de cada container do Job (um por vez). Imagens com muitos .jar usam mais memória: se estourar, a
+  # imagem é varrida de novo, sozinha, com memoryLimitRetry
+  resources:
+    cpuRequest: 50m
+    cpuLimit: 500m
+    memoryRequest: 128Mi
+    memoryLimit: 384Mi
+    memoryLimitRetry: 768Mi
+  # emptyDir do Job: banco do Trivy (~1,5 GB) e, se houver .jar nas imagens, o banco Java (~1,5 GB)
+  workdirSizeLimit: 4Gi
+  # PriorityClass dos Jobs: negativa e sem preempção (os pods das aplicações sempre têm preferência)
+  priorityClass:
+    create: true
+    name: nanobot-k8s-scan
+    value: -100
+
 # emptyDir em /data: arquivos esperando o storage voltar e a área da compactação (uma hora de logs por vez)
 bufferSizeLimit: 2Gi
 logLevel: info

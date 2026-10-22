@@ -37,3 +37,33 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "nanobot-k8s.fullname" . }}
     namespace: {{ .Release.Namespace }}
+{{- if .Values.security.enabled }}
+---
+# Varredura de vulnerabilidades: criar e apagar os Jobs só no namespace do agente (ler os pods e os logs deles já está
+# no ClusterRole acima). Nenhum acesso a Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "nanobot-k8s.fullname" . }}-scan
+  labels:
+    {{- include "nanobot-k8s.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "nanobot-k8s.fullname" . }}-scan
+  labels:
+    {{- include "nanobot-k8s.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "nanobot-k8s.fullname" . }}-scan
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "nanobot-k8s.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

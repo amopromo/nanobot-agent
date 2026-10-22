@@ -5,7 +5,8 @@ Agente em Go que roda dentro do cluster Kubernetes (um pod por cluster) e grava 
 - **logs dos pods**, com o pod, o workload (Deployment, CronJob...) e o namespace de cada linha;
 - **uso de CPU e memória dos pods**: valor usado, request e limit, e o percentual do uso sobre o request e sobre o limit (base para os alertas);
 - **status dos pods**: fase, pronto ou não, restarts e motivo (CrashLoopBackOff, OOMKilled, ImagePullBackOff...), e se o pod é de um Deployment ou de uma CronJob (base para o alerta de pods caídos);
-- **nós**: CPU, memória e disco usados x requeridos x allocatable, quantidade de pods.
+- **nós**: CPU, memória e disco usados x requeridos x allocatable, quantidade de pods;
+- **vulnerabilidades das imagens em uso** (Trivy), quando ligado no cadastro do cluster no Nanobot ([abaixo](#varredura-de-vulnerabilidades)).
 
 O Nanobot lê os arquivos com o DuckDB (menu **Kubernetes**). O mesmo bucket atende vários clusters, cada um na sua pasta. O cluster só precisa alcançar o bucket: não há banco de dados no caminho.
 
@@ -16,6 +17,35 @@ O Nanobot lê os arquivos com o DuckDB (menu **Kubernetes**). O mesmo bucket ate
 - Logs pela API (`kubectl logs -f --timestamps`), um stream por container. Pods de CronJob que duram segundos são lidos até o fim mesmo depois de encerrados.
 - Coleta a cada `SAMPLE_INTERVAL` (60s), com o mesmo timestamp para todos os pods (o Nanobot soma por workload). Pod encerrado entra uma vez só.
 - **Reativo** (`collection.reactive`, ligado): uma mudança de estado de pod (fase, pronto, restarts, motivo como CrashLoopBackOff/OOMKilled/Unschedulable, nó) ou de HPA (réplicas) recebida pelos informers dispara na hora uma coleta de todos os pods, com o uso de CPU/memória da última coleta completa (o kubelet só é consultado no `SAMPLE_INTERVAL`), e o envio ao storage. Rajadas (um rollout) viram uma coleta só, e há no mínimo `collection.reactiveMinInterval` (10s) entre duas coletas.
+
+## Varredura de vulnerabilidades
+
+Ligada e agendada no Nanobot (Admin > Kubernetes, no cadastro do cluster): o Nanobot grava `<storage.path>/<clusterName>/_config/security.json` (ligado, a cada quantos dias, dia da semana, hora UTC, severidades e o pedido de "Scan now") e o agente lê a cada `security.configInterval` (5 min). O Nanobot não acessa o cluster; o arquivo só liga, desliga e agenda: a imagem do Trivy, os limites e os comandos vêm do chart.
+
+Na hora marcada, o agente roda um ciclo:
+
+1. **Inventário:** lista os pods Running (uma listagem paginada da API, fora do cache dos informers) e agrupa os containers pelo **digest** da imagem (`imageID` do status). Uma imagem usada por vários workloads é varrida uma vez só. No ciclo da agenda, imagens varridas com sucesso há menos de 20h não são varridas de novo (um ciclo interrompido por um restart continua de onde parou); o "Scan now" varre todas.
+2. **Varredura:** um **Job por vez** no namespace do agente, preso a um nó onde a imagem já roda (`nodeAffinity` pelo nome do nó, como um DaemonSet). Os containers de init rodam em sequência: o helper (o próprio binário do agente, copiado para o emptyDir), o download do banco do Trivy (uma vez por Job) e **um container por imagem**, que é a própria imagem varrida, pelo digest e com `imagePullPolicy: IfNotPresent`, rodando o Trivy copiado (`trivy rootfs /`). A imagem já está no cache do nó: nada é baixado do registry e não precisa de credencial de registry.
+3. **Resultado:** o helper imprime uma linha com o resultado resumido (sem a lista de pacotes) e sai sempre com 0, para não parar as imagens seguintes; o agente lê o log de cada container, grava `image_scans` e `vulnerabilities` e apaga o Job. Entre dois Jobs há uma pausa de `security.jobGap` (30s).
+
+Impacto no cluster:
+
+- Um container de varredura por vez em todo o cluster, com request de 50m/128Mi e limit de 500m/384Mi. Medido com o Trivy 0.75 (0,5 CPU): imagens Python e Node em ~1s com até 96 MiB; uma imagem Java com centenas de `.jar` em ~3s com 192 MiB (128 MiB estoura). Se estourar a memória, a imagem é varrida de novo, sozinha, com `memoryLimitRetry` (768Mi).
+- `PriorityClass` `nanobot-k8s-scan` com valor negativo e `preemptionPolicy: Never`: num nó cheio o Job espera (o agente desiste em 10 min) e nunca tira um pod da aplicação do lugar.
+- O emptyDir do Job guarda o banco do Trivy (~1,5 GB) e, só se alguma imagem tiver `.jar`, o banco Java (~1,5 GB, baixado na primeira imagem que precisar). Fica no disco do nó só durante o Job.
+- Só o scanner de vulnerabilidades (`--scanners vuln`, sem segredos nem configurações), `--parallel 1`, telemetria desligada.
+- Os bancos vêm de `mirror.gcr.io` (público, sem autenticação, acessível fora do GCP), com `ghcr.io` como reserva. Sem internet no cluster, aponte `security.dbRepository`/`security.javaDbRepository` para uma cópia num registry interno.
+
+Segurança do Job: sem service account (`automountServiceAccountToken: false`), rootfs só leitura, sem escalada de privilégio, todas as capabilities removidas (o container da imagem varrida fica só com `DAC_READ_SEARCH`, para ler os arquivos de outros usuários dentro da imagem). Roda como root dentro da imagem varrida para ler todos os arquivos: um namespace com Pod Security `restricted` bloqueia o Job (o do agente não pode ter essa política).
+
+Quando a imagem não é varrida:
+
+- O pod saiu do nó e o kubelet já limpou a imagem do cache: o Job precisa baixá-la. Imagens públicas e as baixadas pela credencial do próprio nó (Artifact Registry no GKE, ECR, ACR) funcionam; as que dependem de um `imagePullSecret` do namespace do workload ficam como `skipped` e vão para o próximo ciclo. O mesmo vale para clusters com a feature `KubeletEnsureSecretPulledImages` ligada.
+- O nó está cordoned ou não pronto: `skipped`.
+
+O estado do ciclo (último, próximo, andamento, imagens com erro) fica em `_state/security.json`, que o Nanobot mostra em Kubernetes > Security.
+
+RBAC a mais: um `Role` só no namespace do agente para criar, ler e apagar Jobs (ler os pods e os logs já está no ClusterRole). Nenhum acesso a Secrets. Com `security.enabled: false` o agente ignora a configuração e o chart não cria o Role nem a PriorityClass.
 
 ## Onde os dados ficam
 
@@ -32,6 +62,9 @@ O Nanobot lê os arquivos com o DuckDB (menu **Kubernetes**). O mesmo bucket ate
 | `hpa_samples` | fato | ts, workload_id, namespace_id, name, min_replicas, max_replicas, current_replicas, desired_replicas |
 | `node_samples` | fato | ts, node_id, ready, unschedulable, cpu_*_m, mem_*_bytes, fs_capacity_bytes, fs_used_bytes, ephemeral_*_bytes, pods_count, pods_capacity |
 | `logs` | fato | ts, pod_id, workload_id, namespace_id, container, message |
+| `image_workloads` | fato | ts (início do ciclo), digest, image, namespace_id, workload_id, container, pods: quem usava cada imagem no ciclo |
+| `image_scans` | fato | ts, cycle_ts, digest, image, node, status (ok, error, oom, timeout, skipped), error, duration_ms, vulns, critical, high, medium, low, os_family, os_name |
+| `vulnerabilities` | fato | ts e digest (os da varredura), vuln_id (CVE/GHSA), severity, score (maior CVSS), title, description, url, pkg, installed, fixed, status, target, pkg_path (arquivo), type (debian, jar, pip...), published |
 
 - Os dados fixos (cluster, namespace, workload, nó, pod) ficam só nas dimensões; os fatos guardam apenas os ids. Os ids são hashes estáveis (FNV-64) dos nomes (o pod usa o uid), então não duplicam entre reinícios.
 - As dimensões são gravadas de novo a cada dia em que o item aparece: cada dia do storage é completo sozinho, e a retenção apaga dias inteiros sem deixar pod sem nome.
@@ -150,8 +183,16 @@ Sem `credentials.existingSecret`, o chart cria o Secret (`templates/secret.yaml`
 | `logs.maxLineBytes` | `16384` | Linhas maiores são cortadas |
 | `bufferSizeLimit` | `2Gi` | emptyDir `/data`: spool com o storage fora do ar e área da compactação |
 | `resources` | req 50m/64Mi, limit 512Mi | O GC do Go trabalha abaixo de 85% do limit de memória |
+| `security.enabled` | `true` | Varredura de vulnerabilidades disponível (quem liga e agenda é o Nanobot). `false`: sem Jobs, sem Role e sem PriorityClass |
+| `security.trivyImage` | `aquasec/trivy:0.75.0` | Imagem do Trivy (versão fixa) |
+| `security.dbRepository` / `security.javaDbRepository` | (padrão do Trivy) | Repositórios dos bancos (mirror.gcr.io, depois ghcr.io); um registry interno em clusters sem internet |
+| `security.imagesPerJob` | `8` | Imagens varridas em sequência por Job (o banco é baixado uma vez por Job) |
+| `security.imageTimeout` / `security.jobGap` | `5m` / `30s` | Tempo máximo por imagem e pausa entre dois Jobs |
+| `security.resources` | req 50m/128Mi, limit 500m/384Mi | Container de varredura; `memoryLimitRetry` (768Mi) na segunda tentativa |
+| `security.workdirSizeLimit` | `4Gi` | emptyDir do Job (bancos do Trivy) |
+| `security.priorityClass` | `nanobot-k8s-scan`, `-100` | PriorityClass dos Jobs (`create: false` para usar uma existente) |
 
-RBAC: somente leitura (`get/list/watch` em pods, nós, ReplicaSets, Jobs, CronJobs e HorizontalPodAutoscalers; `get` em `pods/log` e `nodes/proxy`). Uma réplica só (`strategy: Recreate`): duas gravariam as mesmas janelas.
+RBAC: somente leitura no cluster (`get/list/watch` em pods, nós, ReplicaSets, Jobs, CronJobs e HorizontalPodAutoscalers; `get` em `pods/log` e `nodes/proxy`) e, com a varredura, criar/apagar Jobs no namespace do agente. Uma réplica só (`strategy: Recreate`): duas gravariam as mesmas janelas.
 
 Cada container com log abre um stream na API: em clusters grandes, limite os namespaces de log (`logs.namespaces`/`logs.excludeNamespaces`).
 
@@ -187,7 +228,7 @@ Para versionar, publique também uma tag fixa (ex.: `amopromo/nanobot-k8s-agent:
 
 ```bash
 cd kubernetes
-go test ./...      # spool, compactação, retenção, coleta (clientset fake), transformações do cache, senhas nos logs
+go test ./...      # spool, compactação, retenção, coleta e varredura (clientset fake), transformações do cache, senhas nos logs
 # os mesmos testes num bucket de verdade:
 TEST_STORAGE=s3://bucket/testes TEST_CREDENTIALS=./credentials.json go test ./...
 # 6h de dados sintéticos para testar as telas do Nanobot (DEMO_END=2026-09-10T12:00:00Z gera dados antigos)

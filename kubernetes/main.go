@@ -26,6 +26,9 @@ func main() {
 		level = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(redactHandler{slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})}))
+	if helper, code := runScanHelper(os.Args); helper {
+		os.Exit(code)
+	}
 	setMemoryLimit()
 	if err := run(); err != nil {
 		slog.Error("agente encerrado", "err", err)
@@ -104,9 +107,12 @@ func run() error {
 	}
 	slog.Info("agente iniciado", "cluster", cfg.ClusterName, "storage", cfg.ClusterPath(), "retention", retention,
 		"sample_interval", cfg.SampleInterval.String(), "flush_interval", cfg.FlushInterval.String(), "reactive", cfg.Reactive,
-		"logs", cfg.LogsEnabled)
+		"logs", cfg.LogsEnabled, "security_scan", cfg.SecurityScan)
 
 	go serveHealth(cfg, col, store)
+	if cfg.SecurityScan {
+		go NewSecurity(cfg, col, store).Run(ctx)
+	}
 
 	sampleTick := time.NewTicker(cfg.SampleInterval)
 	flushTick := time.NewTicker(cfg.FlushInterval)

@@ -21,3 +21,21 @@ data:
   LOG_EXCLUDE_NAMESPACES: {{ join "," .Values.logs.excludeNamespaces | quote }}
   LOG_MAX_LINE_BYTES: {{ .Values.logs.maxLineBytes | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
+  SECURITY_SCAN: {{ .Values.security.enabled | quote }}
+  {{- if .Values.security.enabled }}
+  AGENT_IMAGE: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+  TRIVY_IMAGE: {{ .Values.security.trivyImage | quote }}
+  TRIVY_DB_REPOSITORY: {{ .Values.security.dbRepository | quote }}
+  TRIVY_JAVA_DB_REPOSITORY: {{ .Values.security.javaDbRepository | quote }}
+  SCAN_IMAGES_PER_JOB: {{ .Values.security.imagesPerJob | quote }}
+  SCAN_IMAGE_TIMEOUT: {{ .Values.security.imageTimeout | quote }}
+  SCAN_JOB_GAP: {{ .Values.security.jobGap | quote }}
+  SCAN_CONFIG_INTERVAL: {{ .Values.security.configInterval | quote }}
+  SCAN_CPU_REQUEST: {{ .Values.security.resources.cpuRequest | quote }}
+  SCAN_CPU_LIMIT: {{ .Values.security.resources.cpuLimit | quote }}
+  SCAN_MEMORY_REQUEST: {{ .Values.security.resources.memoryRequest | quote }}
+  SCAN_MEMORY_LIMIT: {{ .Values.security.resources.memoryLimit | quote }}
+  SCAN_MEMORY_LIMIT_RETRY: {{ .Values.security.resources.memoryLimitRetry | quote }}
+  SCAN_WORKDIR_SIZE: {{ .Values.security.workdirSizeLimit | quote }}
+  SCAN_PRIORITY_CLASS: {{ .Values.security.priorityClass.name | quote }}
+  {{- end }}

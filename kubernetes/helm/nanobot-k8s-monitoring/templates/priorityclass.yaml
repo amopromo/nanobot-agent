@@ -1,0 +1,14 @@
+{{- if and .Values.security.enabled .Values.security.priorityClass.create }}
+# Jobs da varredura de vulnerabilidades: prioridade abaixo da padrão (0) e sem preempção. Num nó cheio o Job espera
+# (e o agente desiste depois de 10 minutos); nunca tira um pod da aplicação do lugar.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Values.security.priorityClass.name }}
+  labels:
+    {{- include "nanobot-k8s.labels" . | nindent 4 }}
+value: {{ .Values.security.priorityClass.value }}
+preemptionPolicy: Never
+globalDefault: false
+description: Jobs de varredura de vulnerabilidades do nanobot-k8s-monitoring
+{{- end }}

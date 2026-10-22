@@ -122,6 +122,59 @@ type LogRow struct {
 	Message     string    `parquet:"message"`
 }
 
+// Varredura de vulnerabilidades das imagens (security.go). A varredura é por digest: uma imagem usada por vários
+// workloads é varrida uma vez só, e image_workloads liga o digest aos workloads que o usavam no início do ciclo.
+
+// ImageWorkloadRow é o inventário do ciclo: quem usa cada imagem (todas as do ciclo, varridas agora ou não).
+type ImageWorkloadRow struct {
+	TS          time.Time `parquet:"ts,timestamp(microsecond:local)"` // início do ciclo
+	Digest      string    `parquet:"digest"`
+	Image       string    `parquet:"image"` // como está no pod (repositório:tag)
+	NamespaceID int64     `parquet:"namespace_id"`
+	WorkloadID  *int64    `parquet:"workload_id,optional"`
+	Container   string    `parquet:"container"`
+	Pods        int64     `parquet:"pods"`
+}
+
+// ImageScanRow é o resultado da varredura de um digest.
+type ImageScanRow struct {
+	TS         time.Time `parquet:"ts,timestamp(microsecond:local)"`
+	CycleTS    time.Time `parquet:"cycle_ts,timestamp(microsecond:local)"`
+	Digest     string    `parquet:"digest"`
+	Image      string    `parquet:"image"`
+	Node       string    `parquet:"node"`
+	Status     string    `parquet:"status"` // ok, error, oom, timeout, skipped
+	Error      *string   `parquet:"error,optional"`
+	DurationMS int64     `parquet:"duration_ms"`
+	Vulns      int64     `parquet:"vulns"`
+	Critical   int64     `parquet:"critical"`
+	High       int64     `parquet:"high"`
+	Medium     int64     `parquet:"medium"`
+	Low        int64     `parquet:"low"`
+	OSFamily   *string   `parquet:"os_family,optional"`
+	OSName     *string   `parquet:"os_name,optional"`
+}
+
+// VulnerabilityRow é uma vulnerabilidade encontrada numa varredura (ts e digest iguais aos da ImageScanRow).
+type VulnerabilityRow struct {
+	TS          time.Time  `parquet:"ts,timestamp(microsecond:local)"`
+	Digest      string     `parquet:"digest"`
+	VulnID      string     `parquet:"vuln_id"` // CVE-..., GHSA-...
+	Severity    string     `parquet:"severity"`
+	Score       *float64   `parquet:"score,optional"` // maior CVSS v3 entre as fontes
+	Title       *string    `parquet:"title,optional"`
+	Description *string    `parquet:"description,optional"`
+	URL         *string    `parquet:"url,optional"`
+	Pkg         string     `parquet:"pkg"`
+	Installed   string     `parquet:"installed"`
+	Fixed       *string    `parquet:"fixed,optional"`
+	Status      *string    `parquet:"status,optional"` // fixed, affected, will_not_fix...
+	Target      string     `parquet:"target"`          // o que foi analisado: SO (debian 12.5) ou o arquivo (app.jar, requirements.txt)
+	PkgPath     *string    `parquet:"pkg_path,optional"`
+	Type        *string    `parquet:"type,optional"` // debian, alpine, jar, pip, npm, gobinary...
+	Published   *time.Time `parquet:"published,optional,timestamp(microsecond:local)"`
+}
+
 // Tables agrupa os buffers de todas as tabelas do storage.
 type Tables struct {
 	Clusters    *Table[ClusterRow]
@@ -133,6 +186,10 @@ type Tables struct {
 	NodeSamples *Table[NodeSampleRow]
 	HPASamples  *Table[HPASampleRow]
 	Logs        *Table[LogRow]
+
+	ImageWorkloads  *Table[ImageWorkloadRow]
+	ImageScans      *Table[ImageScanRow]
+	Vulnerabilities *Table[VulnerabilityRow]
 }
 
 func newTables() *Tables {
@@ -147,11 +204,16 @@ func newTables() *Tables {
 		HPASamples:  newTable("hpa_samples", true, func(r *HPASampleRow) time.Time { return r.TS }, nil),
 		// Logs ficam em um arquivo por hora: juntar o dia inteiro baixaria e subiria de novo um volume grande
 		Logs: newTable("logs", false, func(r *LogRow) time.Time { return r.TS }, func(r *LogRow) int { return len(r.Message) + 64 }),
+
+		ImageWorkloads:  newTable("image_workloads", true, func(r *ImageWorkloadRow) time.Time { return r.TS }, nil),
+		ImageScans:      newTable("image_scans", true, func(r *ImageScanRow) time.Time { return r.TS }, nil),
+		Vulnerabilities: newTable("vulnerabilities", true, func(r *VulnerabilityRow) time.Time { return r.TS }, nil),
 	}
 }
 
 func (t *Tables) all() []anyTable {
-	return []anyTable{t.Clusters, t.Namespaces, t.Workloads, t.Nodes, t.Pods, t.PodSamples, t.NodeSamples, t.HPASamples, t.Logs}
+	return []anyTable{t.Clusters, t.Namespaces, t.Workloads, t.Nodes, t.Pods, t.PodSamples, t.NodeSamples, t.HPASamples, t.Logs,
+		t.ImageWorkloads, t.ImageScans, t.Vulnerabilities}
 }
 
 func ptr[T any](v T) *T { return &v }

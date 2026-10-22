@@ -45,6 +45,11 @@ spec:
             - configMapRef:
                 name: {{ include "nanobot-k8s.fullname" . }}
           env:
+            # Namespace dos Jobs da varredura de vulnerabilidades
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             # O GC do Go trabalha abaixo de 85% do limit (sem limit: a memória do nó)
             - name: MEMORY_LIMIT_BYTES
               valueFrom:
