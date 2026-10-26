@@ -479,3 +479,83 @@ func TestReactiveSample(t *testing.T) {
 		t.Errorf("coleta reativa do api-x1: %+v", reactive)
 	}
 }
+
+func TestMemoryDiagnosis(t *testing.T) {
+	ctx := context.Background()
+	cfg, creds := testConfig(t)
+	created := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	killed := created.Add(-2 * time.Minute)
+	// Container que reiniciou por OOMKilled e está em CrashLoopBackOff (o motivo do pod esconde o OOMKilled)
+	oom := mkPod("prod", "api-7d9f-x4", "node-a", corev1.PodRunning, owner("ReplicaSet", "api-7d9f"), res("250m", "256Mi", "500m", "512Mi"), created)
+	oom.Labels = map[string]string{"pod-template-hash": "7d9f"}
+	oom.Status.ContainerStatuses[0] = corev1.ContainerStatus{Name: "app", RestartCount: 2,
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+		LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+			Reason: "OOMKilled", ExitCode: 137, FinishedAt: metav1.NewTime(killed)}}}
+	// Pod despejado por falta de memória no nó
+	evicted := mkPod("prod", "api-7d9f-x5", "node-b", corev1.PodFailed, owner("ReplicaSet", "api-7d9f"), res("250m", "256Mi", "500m", "512Mi"), created)
+	evicted.Labels = map[string]string{"pod-template-hash": "7d9f"}
+	evicted.Status.Reason, evicted.Status.Message = "Evicted", "The node was low on resource: memory. Threshold quantity: 100Mi, available: 80Mi."
+	// node-b com MemoryPressure e um evento SystemOOM (e um evento de outro motivo, que fica de fora)
+	pressure := mkNode("node-b")
+	pressure.Status.Conditions = append(pressure.Status.Conditions, corev1.NodeCondition{Type: corev1.NodeMemoryPressure, Status: corev1.ConditionTrue})
+	sysOOM := &corev1.Event{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "node-b.oom"}, Reason: "SystemOOM",
+		InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "node-b"}, LastTimestamp: metav1.NewTime(killed)}
+	other := &corev1.Event{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "node-a.reboot"}, Reason: "Rebooted",
+		InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "node-a"}, LastTimestamp: metav1.NewTime(killed)}
+	objs := []runtime.Object{oom, evicted, sysOOM, other}
+	col, store, _ := newTestCollector(t, cfg, creds, created, objs...)
+	// o node-b do testCluster é trocado pelo com MemoryPressure
+	if _, err := col.cs.CoreV1().Nodes().Update(ctx, pressure, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 50; i++ {
+		if n, _ := col.nodes.Get("node-b"); n != nil && nodeCondition(n, corev1.NodeMemoryPressure) != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := col.Sample(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	samples, _ := readTable[PodSampleRow](t, store, "pod_samples")
+	var gotOOM, gotEvicted bool
+	for _, s := range samples {
+		switch s.PodID {
+		case podID(cfg.ClusterName, "uid-prod-api-7d9f-x4"):
+			gotOOM = true
+			if s.Reason == nil || *s.Reason != "CrashLoopBackOff" || s.LastTerminationReason == nil || *s.LastTerminationReason != "OOMKilled" ||
+				s.LastExitCode == nil || *s.LastExitCode != 137 || s.LastTerminatedAt == nil || !s.LastTerminatedAt.Equal(killed) {
+				t.Errorf("pod com OOMKilled: %+v", s)
+			}
+		case podID(cfg.ClusterName, "uid-prod-api-7d9f-x5"):
+			gotEvicted = true
+			if s.Reason == nil || *s.Reason != "Evicted" || s.Message == nil || !strings.Contains(*s.Message, "low on resource: memory") {
+				t.Errorf("pod despejado: %+v", s)
+			}
+		case podID(cfg.ClusterName, "uid-prod-api-7d9f-x1"):
+			if s.LastTerminationReason != nil || s.LastExitCode != nil {
+				t.Errorf("pod sem encerramento com last_termination: %+v", s)
+			}
+		}
+	}
+	if !gotOOM || !gotEvicted {
+		t.Fatalf("pods não coletados: oom=%v evicted=%v", gotOOM, gotEvicted)
+	}
+	nodes, _ := readTable[NodeSampleRow](t, store, "node_samples")
+	for _, n := range nodes {
+		switch n.NodeID {
+		case nodeID(cfg.ClusterName, "node-b"):
+			if n.MemoryPressure == nil || !*n.MemoryPressure || n.LastSystemOOM == nil || !n.LastSystemOOM.Equal(killed) {
+				t.Errorf("node-b: memory_pressure=%v last_system_oom_at=%v", n.MemoryPressure, n.LastSystemOOM)
+			}
+		case nodeID(cfg.ClusterName, "node-a"):
+			if n.MemoryPressure != nil || n.LastSystemOOM != nil {
+				t.Errorf("node-a: memory_pressure=%v last_system_oom_at=%v", n.MemoryPressure, n.LastSystemOOM)
+			}
+		}
+	}
+}

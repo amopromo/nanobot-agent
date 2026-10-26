@@ -15,6 +15,7 @@ O Nanobot lê os arquivos com o DuckDB (menu **Kubernetes**). O mesmo bucket ate
 ## Como coleta
 
 - Estado do cluster pelos informers (pods, nós, ReplicaSets, Jobs, CronJobs e HorizontalPodAutoscalers), para achar o dono de cada pod: ReplicaSet → **Deployment**, Job → **CronJob** e nó → **StaticPod**. O cache guarda só os campos usados (pods sem env, volumes, anotações etc.; nós sem a lista de imagens) e ReplicaSets, Jobs e CronJobs só com os metadados.
+- Eventos `SystemOOM` dos nós (só esses: o watch usa um field selector), para separar a falta de memória no nó da do limit do container. Sem a permissão de ler events (chart anterior), o agente avisa no log e segue.
 - Uso de CPU, memória e disco pelo summary do kubelet (`/api/v1/nodes/<nó>/proxy/stats/summary`), sem depender do metrics-server.
 - Logs pela API (`kubectl logs -f --timestamps`), um stream por container. Pods de CronJob que duram segundos são lidos até o fim mesmo depois de encerrados.
 - Coleta a cada `SAMPLE_INTERVAL` (60s), com o mesmo timestamp para todos os pods (o Nanobot soma por workload). Pod encerrado entra uma vez só.
@@ -60,9 +61,9 @@ RBAC a mais: um `Role` só no namespace do agente para criar, ler e apagar Jobs 
 | `workloads` | dimensão | id, cluster_id, namespace_id, kind (Deployment, CronJob, StatefulSet, DaemonSet, Job, StaticPod...), name, first_seen |
 | `nodes` | dimensão | id, cluster_id, name, first_seen |
 | `pods` | dimensão | id, cluster_id, namespace_id, workload_id, name, uid, owner_kind, created_at, first_seen |
-| `pod_samples` | fato | ts, pod_id, workload_id, namespace_id, node_id, phase, ready, restarts, reason, cpu_usage_m, cpu_request_m, cpu_limit_m, mem_usage_bytes, mem_request_bytes, mem_limit_bytes, ephemeral_usage_bytes, cpu_pct_request, cpu_pct_limit, mem_pct_request, mem_pct_limit, message (mensagem do agendador do pod Pending sem nó, ex.: `0/3 nodes are available: 3 Insufficient cpu.`) |
+| `pod_samples` | fato | ts, pod_id, workload_id, namespace_id, node_id, phase, ready, restarts, reason, cpu_usage_m, cpu_request_m, cpu_limit_m, mem_usage_bytes, mem_request_bytes, mem_limit_bytes, ephemeral_usage_bytes, cpu_pct_request, cpu_pct_limit, mem_pct_request, mem_pct_limit, message (mensagem do agendador do pod Pending sem nó, ex.: `0/3 nodes are available: 3 Insufficient cpu.`, ou do kubelet no pod despejado, ex.: `The node was low on resource: memory.`), last_termination_reason, last_exit_code, last_terminated_at (o último encerramento de um container do pod: `OOMKilled`, `Error`..., o código de saída, 137 = morto pelo kernel, e o horário; desde a 0.7.0) |
 | `hpa_samples` | fato | ts, workload_id, namespace_id, name, min_replicas, max_replicas, current_replicas, desired_replicas |
-| `node_samples` | fato | ts, node_id, ready, unschedulable, cpu_*_m, mem_*_bytes, fs_capacity_bytes, fs_used_bytes, ephemeral_*_bytes, pods_count, pods_capacity |
+| `node_samples` | fato | ts, node_id, ready, unschedulable, cpu_*_m, mem_*_bytes, fs_capacity_bytes, fs_used_bytes, ephemeral_*_bytes, pods_count, pods_capacity, memory_pressure (condição MemoryPressure), last_system_oom_at (último evento `SystemOOM` do kubelet: o kernel do nó matou um processo por falta de memória no nó; desde a 0.7.0) |
 | `logs` | fato | ts, pod_id, workload_id, namespace_id, container, message |
 | `image_workloads` | fato | ts (início do ciclo), digest, image, namespace_id, workload_id, container, pods: quem usava cada imagem no ciclo |
 | `image_scans` | fato | ts, cycle_ts, digest, image, node, status (ok, error, oom, timeout, skipped), error, duration_ms, vulns, critical, high, medium, low, os_family, os_name, os_eosl (versão do SO fora de suporte) |
@@ -206,7 +207,7 @@ Sem `credentials.existingSecret`, o chart cria o Secret (`templates/secret.yaml`
 | `security.workdirSizeLimit` | `4Gi` | emptyDir do Job (bancos do Trivy) |
 | `security.priorityClass` | `nanobot-k8s-scan`, `-100` | PriorityClass dos Jobs (`create: false` para usar uma existente) |
 
-RBAC: somente leitura no cluster (`get/list/watch` em pods, nós, ReplicaSets, Jobs, CronJobs e HorizontalPodAutoscalers; `get` em `pods/log` e `nodes/proxy`) e, com a varredura, criar/apagar Jobs no namespace do agente. Uma réplica só (`strategy: Recreate`): duas gravariam as mesmas janelas.
+RBAC: somente leitura no cluster (`get/list/watch` em pods, nós, events, ReplicaSets, Jobs, CronJobs e HorizontalPodAutoscalers; `get` em `pods/log` e `nodes/proxy`) e, com a varredura, criar/apagar Jobs no namespace do agente. Uma réplica só (`strategy: Recreate`): duas gravariam as mesmas janelas.
 
 Cada container com log abre um stream na API: em clusters grandes, limite os namespaces de log (`logs.namespaces`/`logs.excludeNamespaces`).
 

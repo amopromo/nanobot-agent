@@ -54,6 +54,7 @@ type Collector struct {
 	lastTS        time.Time                // horário da última coleta: duas no mesmo segundo somariam os pods em dobro
 	version       string                   // versão do Kubernetes (dimensão do cluster)
 	terminalSeen  map[string]bool          // pods encerrados já registrados uma vez (não repete a cada coleta)
+	systemOOM     map[string]time.Time     // último evento SystemOOM de cada nó (oom.go)
 	lastSampleOK  time.Time
 }
 
@@ -104,6 +105,7 @@ func (c *Collector) Start(ctx context.Context) error {
 		c.hpas = c.factory.Autoscaling().V2().HorizontalPodAutoscalers().Lister()
 	}
 	c.watchChanges()
+	c.startSystemOOM(ctx)
 	c.factory.Start(ctx.Done())
 	c.meta.Start(ctx.Done())
 	for typ, ok := range c.factory.WaitForCacheSync(ctx.Done()) {
@@ -458,7 +460,9 @@ func (c *Collector) sample(ctx context.Context, full bool) error {
 			nid = ptr(nodeID(cl, pod.Spec.NodeName))
 		}
 		ready, restarts, reason, message := podStatus(pod)
+		lastReason, lastExit, lastAt := lastTermination(pod)
 		podRows = append(podRows, PodSampleRow{
+			LastTerminationReason: lastReason, LastExitCode: lastExit, LastTerminatedAt: lastAt,
 			TS: ts, PodID: ref.id, WorkloadID: ref.workloadID, NamespaceID: ref.namespaceID, NodeID: nid,
 			Phase: string(pod.Status.Phase), Ready: ready, Restarts: restarts, Reason: strPtr(reason), Message: strPtr(message),
 			CPUUsageM: u.cpuM, CPURequestM: positiveF(r.cpuReq), CPULimitM: positiveF(r.cpuLimOrZero()),
@@ -483,6 +487,7 @@ func (c *Collector) sample(ctx context.Context, full bool) error {
 			TS: ts, NodeID: id, Ready: nodeReady(n), Unschedulable: n.Spec.Unschedulable,
 			CPURequestM: float64(a.cpuReq), CPULimitM: float64(a.cpuLim),
 			MemRequestBytes: a.memReq, MemLimitBytes: a.memLim, EphemeralRequestBytes: a.ephReq, PodsCount: a.pods,
+			MemoryPressure: nodeCondition(n, corev1.NodeMemoryPressure), LastSystemOOM: c.lastSystemOOM(n.Name),
 		}
 		if s := summaries[n.Name]; s != nil {
 			if s.Node.CPU != nil && s.Node.CPU.UsageNanoCores != nil {
@@ -643,6 +648,9 @@ func podStatus(p *corev1.Pod) (ready bool, restarts int64, reason, message strin
 	}
 	if p.Status.Reason != "" {
 		reason = p.Status.Reason
+		if p.Status.Message != "" {
+			message = p.Status.Message
+		}
 	}
 	statuses := append(append([]corev1.ContainerStatus{}, p.Status.InitContainerStatuses...), p.Status.ContainerStatuses...)
 	for _, cs := range statuses {
@@ -669,6 +677,40 @@ func podStatus(p *corev1.Pod) (ready bool, restarts int64, reason, message strin
 		}
 	}
 	return ready, restarts, reason, message
+}
+
+// lastTermination devolve o encerramento mais recente entre os containers do pod: o atual (container parado) ou o
+// anterior (lastState, de um container que já reiniciou). Encerramentos normais (Completed) ficam de fora.
+func lastTermination(p *corev1.Pod) (reason *string, exitCode *int64, at *time.Time) {
+	var best *corev1.ContainerStateTerminated
+	statuses := append(append([]corev1.ContainerStatus{}, p.Status.InitContainerStatuses...), p.Status.ContainerStatuses...)
+	for _, cs := range statuses {
+		for _, t := range []*corev1.ContainerStateTerminated{cs.State.Terminated, cs.LastTerminationState.Terminated} {
+			if t == nil || t.Reason == "Completed" || (t.Reason == "" && t.ExitCode == 0) {
+				continue
+			}
+			if best == nil || t.FinishedAt.After(best.FinishedAt.Time) {
+				best = t
+			}
+		}
+	}
+	if best == nil {
+		return nil, nil, nil
+	}
+	if !best.FinishedAt.IsZero() {
+		at = ptr(best.FinishedAt.UTC())
+	}
+	return strPtr(best.Reason), ptr(int64(best.ExitCode)), at
+}
+
+// nodeCondition: nil quando o nó não informa a condição.
+func nodeCondition(n *corev1.Node, typ corev1.NodeConditionType) *bool {
+	for _, c := range n.Status.Conditions {
+		if c.Type == typ {
+			return ptr(c.Status == corev1.ConditionTrue)
+		}
+	}
+	return nil
 }
 
 func nodeReady(n *corev1.Node) bool {

@@ -56,7 +56,8 @@ func slimState(s corev1.ContainerState) corev1.ContainerState {
 		out.Waiting = &corev1.ContainerStateWaiting{Reason: s.Waiting.Reason}
 	}
 	if s.Terminated != nil {
-		out.Terminated = &corev1.ContainerStateTerminated{Reason: s.Terminated.Reason, ExitCode: s.Terminated.ExitCode}
+		out.Terminated = &corev1.ContainerStateTerminated{Reason: s.Terminated.Reason, ExitCode: s.Terminated.ExitCode,
+			FinishedAt: s.Terminated.FinishedAt}
 	}
 	return out
 }
@@ -83,6 +84,8 @@ func slimPod(p *corev1.Pod) *corev1.Pod {
 		},
 		Status: corev1.PodStatus{
 			Phase: p.Status.Phase, Reason: p.Status.Reason,
+			// Pod despejado (Evicted) ou recusado pelo nó: a mensagem diz o recurso que faltou
+			Message:           truncateIf(p.Status.Reason != "", p.Status.Message, maxSchedulingMessage),
 			ContainerStatuses: slimStatuses(p.Status.ContainerStatuses), InitContainerStatuses: slimStatuses(p.Status.InitContainerStatuses),
 		},
 	}
@@ -113,6 +116,13 @@ func slimPod(p *corev1.Pod) *corev1.Pod {
 // Mensagem do agendador guardada por pod (com muitos nós ela lista os motivos de cada grupo de nós)
 const maxSchedulingMessage = 512
 
+func truncateIf(keep bool, s string, n int) string {
+	if !keep {
+		return ""
+	}
+	return truncate(s, n)
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -141,8 +151,8 @@ func slimNode(n *corev1.Node) *corev1.Node {
 		Status:     corev1.NodeStatus{Capacity: n.Status.Capacity, Allocatable: n.Status.Allocatable},
 	}
 	for _, c := range n.Status.Conditions {
-		if c.Type == corev1.NodeReady {
-			out.Status.Conditions = []corev1.NodeCondition{{Type: c.Type, Status: c.Status}}
+		if c.Type == corev1.NodeReady || c.Type == corev1.NodeMemoryPressure {
+			out.Status.Conditions = append(out.Status.Conditions, corev1.NodeCondition{Type: c.Type, Status: c.Status})
 		}
 	}
 	return out

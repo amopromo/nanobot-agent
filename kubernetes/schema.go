@@ -74,8 +74,14 @@ type PodSampleRow struct {
 	CPUPctLimit         *float64  `parquet:"cpu_pct_limit,optional"`
 	MemPctRequest       *float64  `parquet:"mem_pct_request,optional"`
 	MemPctLimit         *float64  `parquet:"mem_pct_limit,optional"`
-	// Pod Pending sem nó: a mensagem do agendador (ex.: "0/3 nodes are available: 3 Insufficient cpu.")
+	// Pod Pending sem nó: a mensagem do agendador (ex.: "0/3 nodes are available: 3 Insufficient cpu."); pod despejado
+	// (Evicted): a do kubelet (ex.: "The node was low on resource: memory. ...")
 	Message *string `parquet:"message,optional"`
+	// Último encerramento de um container do pod (o mais recente): motivo (OOMKilled, Error...), código de saída (137:
+	// morto pelo kernel) e horário. Em CrashLoopBackOff, o motivo do pod (reason) esconde o OOMKilled
+	LastTerminationReason *string    `parquet:"last_termination_reason,optional"`
+	LastExitCode          *int64     `parquet:"last_exit_code,optional"`
+	LastTerminatedAt      *time.Time `parquet:"last_terminated_at,optional,timestamp(microsecond:local)"`
 }
 
 // HPASampleRow é o estado de um HorizontalPodAutoscaler a cada coleta, ligado ao workload que ele escala.
@@ -111,6 +117,10 @@ type NodeSampleRow struct {
 	EphemeralRequestBytes     int64     `parquet:"ephemeral_request_bytes"`
 	PodsCount                 int64     `parquet:"pods_count"`
 	PodsCapacity              int64     `parquet:"pods_capacity"`
+	// Condição MemoryPressure do nó (o kubelet começa a despejar pods) e o último evento SystemOOM do kubelet (o kernel
+	// do nó matou um processo por falta de memória; nil sem o evento ou sem a permissão de ler events)
+	MemoryPressure *bool      `parquet:"memory_pressure,optional"`
+	LastSystemOOM  *time.Time `parquet:"last_system_oom_at,optional,timestamp(microsecond:local)"`
 }
 
 type LogRow struct {

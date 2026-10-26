@@ -1,5 +1,6 @@
-# Somente leitura: pods/logs, nós e o summary do kubelet (nodes/proxy), os donos dos pods para achar o Deployment/CronJob
-# e os HPAs (réplicas atuais x máximo, para os alertas)
+# Somente leitura: pods/logs, nós e o summary do kubelet (nodes/proxy), os donos dos pods para achar o Deployment/CronJob,
+# os HPAs (réplicas atuais x máximo, para os alertas) e os events (o agente só lê os SystemOOM dos nós: falta de memória
+# no nó)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -13,6 +14,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log", "nodes/proxy"]
     verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources: ["replicasets"]
     verbs: ["get", "list", "watch"]
