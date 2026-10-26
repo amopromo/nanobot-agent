@@ -5,7 +5,7 @@ package main
 // uso, vulnerabilidades) e não consegue forjar a configuração gravada pelo Nanobot (o GCM autentica cada bloco).
 //
 // A criptografia própria do Parquet não serve: a do parquet-go e a do DuckDB (Nanobot) não leem os arquivos uma da
-// outra. O Nanobot (app/core/k8s_crypto.py) usa este mesmo formato:
+// outra. O Nanobot usa este mesmo formato:
 //
 //	cabeçalho (32 bytes): "NBE1" | key id (8) | nonce prefix (8, aleatório) | tamanho do bloco (4, big endian) | zeros (8)
 //	blocos: AES-256-GCM(bloco de até chunkSize bytes), nonce = nonce prefix | contador (4, big endian),

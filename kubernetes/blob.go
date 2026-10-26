@@ -1,6 +1,6 @@
 package main
 
-// Acesso ao storage: bucket S3 compatível (AWS, MinIO, Ceph, Magalu...), GCS pela interoperabilidade S3 (chave HMAC),
+// Acesso ao storage: bucket S3 compatível (AWS ou qualquer S3 genérico: MinIO, Ceph...), GCS pela interoperabilidade S3 (chave HMAC),
 // Cloudflare R2 ou um diretório local (desenvolvimento e testes). Só o necessário: subir, baixar, listar e apagar.
 
 import (

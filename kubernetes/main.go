@@ -108,7 +108,7 @@ func run() error {
 	if err := col.Start(ctx); err != nil {
 		return err
 	}
-	retention := "nanobot (clean_logs.py)"
+	retention := "nanobot"
 	if cfg.RetentionDays > 0 {
 		retention = fmt.Sprintf("agent, %d days", cfg.RetentionDays)
 	}

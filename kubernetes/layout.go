@@ -1,6 +1,6 @@
 package main
 
-// Organização dos arquivos no storage (o Nanobot segue as mesmas regras em app/core/k8s_storage.py):
+// Organização dos arquivos no storage (o Nanobot segue as mesmas regras):
 //
 //	<STORAGE_PATH>/<CLUSTER_NAME>/<tabela>/dt=AAAA-MM-DD/hh=HH/<stamp>.parquet   gravado a cada flush
 //	<STORAGE_PATH>/<CLUSTER_NAME>/<tabela>/dt=AAAA-MM-DD/hh=HH/c<stamp>.parquet  a hora compactada

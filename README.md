@@ -5,7 +5,7 @@ Agentes do Nanobot DevOps Utils: código, binários e chart helm.
 | Pasta | Agente |
 |---|---|
 | [`server/`](server/README.md) | Agente dos servidores Linux/Windows: métricas, SSH interno para as tasks e registro automático. Binários em [`server/bin/`](server/bin) |
-| [`kubernetes/`](kubernetes/README.md) | `nanobot-k8s-monitoring`: um pod por cluster que grava logs, uso e status dos pods e nós em Parquet no S3/GCS/R2/Magalu. Imagem [`amopromo/nanobot-k8s-agent`](https://hub.docker.com/r/amopromo/nanobot-k8s-agent) |
+| [`kubernetes/`](kubernetes/README.md) | `nanobot-k8s-monitoring`: um pod por cluster que grava logs, uso e status dos pods e nós em Parquet no S3 (ou compatível)/GCS/R2. Imagem [`amopromo/nanobot-k8s-agent`](https://hub.docker.com/r/amopromo/nanobot-k8s-agent) |
 | [`charts/`](charts) | Repositório helm do agente Kubernetes |
 
 O Nanobot gera os comandos de instalação dos dois agentes já preenchidos: **Servers > Agent Install** e

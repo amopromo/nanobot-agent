@@ -23,7 +23,7 @@ type Config struct {
 	MaintainInterval   time.Duration   // compactação dos arquivos de cada flush e retenção
 	Reactive           bool            // mudança de estado de pod/HPA dispara uma coleta e um envio na hora
 	ReactiveMinGap     time.Duration   // intervalo mínimo entre duas coletas (protege o storage em rajadas)
-	RetentionDays      int             // dias guardados no storage (0, padrão: não apaga; a retenção é do clean_logs.py do Nanobot)
+	RetentionDays      int             // dias guardados no storage (0, padrão: não apaga; a retenção é do Nanobot)
 	ExcludeNS          map[string]bool // namespaces ignorados (pods, workloads e logs); entram só no total dos nós
 	LogsEnabled        bool
 	LogNamespaces      map[string]bool // vazio: todos

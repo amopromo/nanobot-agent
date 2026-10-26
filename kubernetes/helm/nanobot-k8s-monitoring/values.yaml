@@ -48,8 +48,8 @@ logs:
   excludeNamespaces: []
   maxLineBytes: 16384
 
-# Retenção: 0 (padrão) o agente não apaga nada e quem apaga os dias antigos é o clean_logs.py do Nanobot
-# (--k8s-days / K8S_RETENTION_DAYS). Maior que 0: o próprio agente apaga os dias mais antigos.
+# Retenção: 0 (padrão) o agente não apaga nada e quem apaga os dias antigos é o Nanobot.
+# Maior que 0: o próprio agente apaga os dias mais antigos.
 retentionDays: 0
 
 # Varredura de vulnerabilidades das imagens em uso (Trivy). Quem liga e agenda é o Nanobot (cadastro do cluster), que

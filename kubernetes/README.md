@@ -74,7 +74,7 @@ RBAC a mais: um `Role` só no namespace do agente para criar, ler e apagar Jobs 
 - Horários em UTC. CPU em milicores, memória/disco em bytes. Request/limit nulo = não definido no pod.
 - **Gravação:** as linhas ficam num buffer em memória e a cada `FLUSH_INTERVAL` (60s) viram um arquivo por tabela. O arquivo é gravado primeiro no emptyDir `/data` (spool) e depois sobe; com o storage fora do ar, os arquivos esperam no spool (inclusive se o container reiniciar) e sobem em ordem quando ele voltar.
 - **Compactação** (a cada `MAINTENANCE_INTERVAL`, 10 min): a hora fechada vira um arquivo só (`hh=HH/c<stamp>.parquet`) e, nas tabelas que não são de logs, o dia fechado também (`dt=AAAA-MM-DD/c<stamp>.parquet`). O compactado substitui os arquivos com stamp menor ou igual, então quem lê nunca vê uma linha duas vezes, nem enquanto os antigos não foram apagados (eles saem na execução seguinte).
-- **Retenção:** por padrão o agente não apaga nada (`retentionDays: 0`); o `clean_logs.py` do Nanobot apaga os dias mais antigos que `--k8s-days` (ou `K8S_RETENTION_DAYS`), e a chave cadastrada no Nanobot precisa poder apagar. Com `retentionDays` maior que 0, o próprio agente apaga.
+- **Retenção:** por padrão o agente não apaga nada (`retentionDays: 0`); o Nanobot apaga os dias mais antigos, e a chave cadastrada no Nanobot precisa poder apagar. Com `retentionDays` maior que 0, o próprio agente apaga.
 - Senhas e chaves nunca aparecem nos logs do agente (o agente mascara antes de escrever).
 
 Consulta direta com o DuckDB:
@@ -126,8 +126,8 @@ Com `encryption_key` (32 bytes aleatórios em base64, ex.: `openssl rand -base64
 - A mesma chave vai no cadastro do cluster no Nanobot (que guarda as credenciais criptografadas no banco e descriptografa os arquivos num cache local, `K8S_FILE_CACHE_DIR`). O **Agent Install** do Nanobot já inclui a chave no comando.
 - **Guarde uma cópia da chave**: sem ela os dados não podem ser lidos.
 - Troca de chave: a chave nova em `encryption_key` e a antiga em `previous_encryption_keys` (lista), que só lê os arquivos já gravados (no Nanobot, gravar uma chave nova no cadastro faz isso sozinho).
-- Arquivos gravados antes da chave continuam sendo lidos; o `k8s_encrypt_storage.py` do Nanobot criptografa os que ficaram (`--dry-run` lista antes). Os dias novos já saem criptografados.
-- Formato (o mesmo do `app/core/k8s_crypto.py` do Nanobot): cabeçalho de 32 bytes (`NBE1`, id da chave, prefixo do nonce, tamanho do bloco) e blocos de 1 MiB com AES-256-GCM; detalhes em [filecrypt.go](filecrypt.go). A criptografia nativa do Parquet não é usada porque a do parquet-go e a do DuckDB não leem os arquivos uma da outra.
+- Arquivos gravados antes da chave continuam sendo lidos; o Nanobot criptografa os que ficaram. Os dias novos já saem criptografados.
+- Formato (o mesmo usado pelo Nanobot): cabeçalho de 32 bytes (`NBE1`, id da chave, prefixo do nonce, tamanho do bloco) e blocos de 1 MiB com AES-256-GCM; detalhes em [filecrypt.go](filecrypt.go). A criptografia nativa do Parquet não é usada porque a do parquet-go e a do DuckDB não leem os arquivos uma da outra.
 - O Parquet aberto só existe no emptyDir `/data` do pod (spool e compactação), dentro do cluster.
 
 ## Instalação (helm, a partir do repositório git)
@@ -191,7 +191,7 @@ Sem `credentials.existingSecret`, o chart cria o Secret (`templates/secret.yaml`
 | `collection.reactive` | `true` | Mudança de estado de pod/HPA: coleta e envio na hora |
 | `collection.reactiveMinInterval` | `10s` | Intervalo mínimo entre duas coletas reativas |
 | `collection.maintenanceInterval` | `10m` | Compactação das horas/dias fechados e retenção |
-| `retentionDays` | `0` | `0`: o agente não apaga (a retenção é do `clean_logs.py` do Nanobot). Maior que 0: o agente apaga os dias mais antigos |
+| `retentionDays` | `0` | `0`: o agente não apaga (a retenção é do Nanobot). Maior que 0: o agente apaga os dias mais antigos |
 | `logs.enabled` | `true` | Coleta de logs |
 | `excludeNamespaces` | `[kube-system, kube-public, kube-node-lease]` | Namespaces ignorados (pods, workloads e logs); continuam nos totais dos nós. `[]` coleta todos |
 | `logs.namespaces` / `logs.excludeNamespaces` | `[]` | Namespaces com/sem coleta de logs |

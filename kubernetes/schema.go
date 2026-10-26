@@ -4,7 +4,7 @@ import "time"
 
 // Tabelas gravadas no storage. Os dados fixos (cluster, namespace, workload, nó, pod) ficam só nas dimensões; os fatos
 // (pod_samples, node_samples, logs) guardam os ids. Os ids são hashes estáveis (ids.go).
-// O Nanobot (app/core/k8s_storage.py) tem as mesmas colunas: uma coluna nova precisa entrar nos dois.
+// O Nanobot tem as mesmas colunas: uma coluna nova precisa entrar nos dois.
 //
 // As dimensões são gravadas de novo a cada dia (na primeira vez que o item aparece no dia): cada dia do storage
 // é completo sozinho, então a retenção apaga dias inteiros sem deixar pod sem nome.
