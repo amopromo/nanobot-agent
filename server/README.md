@@ -24,6 +24,11 @@ sudo ./agent -install -server="https://nanobot.exemplo.com/tasks/api/register/" 
 
 Os hashes estão em [`bin/SHA256SUMS`](bin/SHA256SUMS) (`sha256sum -c SHA256SUMS`).
 
+**Certificado auto-assinado no `-server`:** se o certificado não é confiável para o sistema, o `-install` mostra o
+certificado (emissor, validade, SHA-256) e pergunta se pode confiar nele só para o registro. Confira o SHA-256 no
+servidor (`openssl x509 -in cert.pem -noout -fingerprint -sha256`). Sem terminal para responder, passe o
+`-server-fingerprint="AB:CD:..."` que ele imprime.
+
 **Atualizar** (mantém a configuração): baixe o binário novo e rode `sudo ./agent -update`.
 
 O `-install` grava o binário em `/opt/nanobot-agent/` e cria o serviço. A API key do agente fica no arquivo `apikey`
@@ -45,6 +50,7 @@ do processo (`ps`). O `-update` move a chave de instalações antigas (que passa
 | `-frequency` | `5` | Frequência do monitoramento no Nanobot, em minutos |
 | `-fail-scripts` / `-recovery-scripts` | | IDs dos scripts de falha/recuperação, separados por vírgula |
 | `-public-ip` | | IP público a registrar (servidor atrás de NAT) |
+| `-server-fingerprint` | | SHA-256 do certificado do `-server` em que confiar (certificado auto-assinado, ex.: atrás de VPN) |
 | `-var` | | Variável do servidor no Nanobot (`NOME=valor`, pode repetir) |
 
 Métricas, para conferir:

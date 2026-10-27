@@ -1,14 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,6 +21,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -183,6 +189,7 @@ var (
 	serverPort           int
 	sshPort              int
 	agentPublicIP        string
+	serverFingerprint    string
 	agentFrequency       int
 	agentFailScripts     string
 	agentRecoveryScripts string
@@ -759,8 +766,7 @@ func registerAgent(serverURL, regKey, metricsApiKey string, port int) (string, e
 	req.Header.Set("Authorization", "Bearer "+regKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := registrationClient().Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -780,6 +786,116 @@ func registerAgent(serverURL, regKey, metricsApiKey string, port int) (string, e
 	}
 
 	return strconv.Itoa(regResponse.ID), nil
+}
+
+// Com -server-fingerprint (ou aceito no prompt do -install), o registro confia só no certificado com esse SHA-256,
+// para servidores atrás de VPN com certificado auto-assinado. Sem ele, a verificação normal do sistema.
+func registrationClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if serverFingerprint != "" {
+		pinned := normalizeFingerprint(serverFingerprint)
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true, // substituído pela comparação do fingerprint abaixo
+			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+				if len(rawCerts) == 0 {
+					return errors.New("the server did not present a certificate")
+				}
+				if got := certFingerprint(rawCerts[0]); normalizeFingerprint(got) != pinned {
+					return fmt.Errorf("server certificate fingerprint %s does not match -server-fingerprint", got)
+				}
+				return nil
+			},
+		}
+	}
+	return &http.Client{Timeout: 10 * time.Second, Transport: transport}
+}
+
+func certFingerprint(der []byte) string {
+	sum := sha256.Sum256(der)
+	hexSum := strings.ToUpper(hex.EncodeToString(sum[:]))
+	pairs := make([]string, 0, len(sum))
+	for i := 0; i < len(hexSum); i += 2 {
+		pairs = append(pairs, hexSum[i:i+2])
+	}
+	return strings.Join(pairs, ":")
+}
+
+// Aceita o formato do openssl (AB:CD:...), sem os dois-pontos e o prefixo "sha256 Fingerprint=" colado inteiro
+func normalizeFingerprint(fp string) string {
+	if i := strings.LastIndex(fp, "="); i >= 0 {
+		fp = fp[i+1:]
+	}
+	fp = strings.NewReplacer(":", "", " ", "").Replace(fp)
+	return strings.ToUpper(fp)
+}
+
+func isCertVerificationError(err error) bool {
+	var verifyErr *tls.CertificateVerificationError
+	return errors.As(err, &verifyErr)
+}
+
+func stdinIsTerminal() bool {
+	info, err := os.Stdin.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// Mostra o certificado do servidor de registro e pergunta se confia nele. Devolve o fingerprint aceito.
+func askTrustServerCert(serverURL string) (string, bool) {
+	u, err := url.Parse(serverURL)
+	if err != nil {
+		return "", false
+	}
+	addr := u.Host
+	if u.Port() == "" {
+		addr = net.JoinHostPort(u.Hostname(), "443")
+	}
+
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{InsecureSkipVerify: true, ServerName: u.Hostname()})
+	if err != nil {
+		log.Printf("⚠️ Could not read the server certificate: %v\n", err)
+		return "", false
+	}
+	certs := conn.ConnectionState().PeerCertificates
+	conn.Close()
+	if len(certs) == 0 {
+		return "", false
+	}
+
+	cert := certs[0]
+	fp := certFingerprint(cert.Raw)
+	fmt.Println()
+	fmt.Println("⚠️  The registration server certificate is not trusted by this system:")
+	fmt.Printf("   Subject:     %s\n", cert.Subject.String())
+	fmt.Printf("   Issuer:      %s\n", cert.Issuer.String())
+	if len(cert.DNSNames) > 0 || len(cert.IPAddresses) > 0 {
+		names := append([]string{}, cert.DNSNames...)
+		for _, ip := range cert.IPAddresses {
+			names = append(names, ip.String())
+		}
+		fmt.Printf("   Names:       %s\n", strings.Join(names, ", "))
+	}
+	fmt.Printf("   Valid:       %s to %s\n", cert.NotBefore.Format("2006-01-02"), cert.NotAfter.Format("2006-01-02"))
+	fmt.Printf("   SHA-256:     %s\n", fp)
+	fmt.Println()
+	fmt.Println("   Compare the SHA-256 with the server's: openssl x509 -in <cert.pem> -noout -fingerprint -sha256")
+	fmt.Printf("   To install without this question, add: -server-fingerprint=\"%s\"\n\n", fp)
+
+	if !stdinIsTerminal() {
+		return "", false
+	}
+
+	fmt.Print("   Trust this certificate for the registration? [y/N]: ")
+	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	fmt.Println()
+	if err != nil && answer == "" { // stdin sem ninguém para responder (ex: /dev/null)
+		return "", false
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer != "y" && answer != "yes" && answer != "s" && answer != "sim" {
+		return "", false
+	}
+	return fp, true
 }
 
 func copyFile(src, dst string) error {
@@ -1350,6 +1466,7 @@ func main() {
 	flag.IntVar(&collectionInterval, "interval", 30, "Interval time between collections in seconds")
 
 	flag.StringVar(&agentPublicIP, "public-ip", "", "Internet/public IP to force on registration (optional)")
+	flag.StringVar(&serverFingerprint, "server-fingerprint", "", "SHA-256 fingerprint of the -server certificate to trust (self-signed, optional)")
 	flag.IntVar(&agentFrequency, "frequency", 5, "Monitoring frequency in minutes for the APM server (default: 5)")
 	flag.StringVar(&agentFailScripts, "fail-scripts", "", "Comma-separated fail script IDs (Ex: 1,4,5)")
 	flag.StringVar(&agentRecoveryScripts, "recovery-scripts", "", "Comma-separated recovery script IDs (Ex: 2)")
@@ -1386,6 +1503,13 @@ func main() {
 
 		log.Println("📡 Registering with the remote API...")
 		serverId, err := registerAgent(serverURL, regAuth, expectedApiKey, serverPort)
+		if err != nil && serverFingerprint == "" && isCertVerificationError(err) {
+			if fp, ok := askTrustServerCert(serverURL); ok {
+				serverFingerprint = fp
+				log.Println("📡 Registering with the remote API (pinned certificate)...")
+				serverId, err = registerAgent(serverURL, regAuth, expectedApiKey, serverPort)
+			}
+		}
 		if err != nil {
 			log.Fatalf("❌ Registration failed: %v\n", err)
 		}
