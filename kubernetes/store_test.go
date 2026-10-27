@@ -138,6 +138,81 @@ func TestFlushAndCompaction(t *testing.T) {
 	}
 }
 
+// Hora aberta: as tabelas pequenas são juntadas a cada manutenção (com openHourMinFiles arquivos ou mais), os flushes
+// seguintes continuam valendo e entram na próxima; os logs esperam a hora fechar.
+func TestOpenHourCompaction(t *testing.T) {
+	ctx := context.Background()
+	cfg, creds := testConfig(t)
+	s := openTestStore(t, cfg, creds)
+	start := time.Date(2026, 10, 20, 11, 0, 0, 0, time.UTC)
+	flush := func(from, to int) {
+		for i := from; i < to; i++ {
+			ts := start.Add(time.Duration(i) * time.Minute)
+			s.T.NodeSamples.Append(NodeSampleRow{TS: ts, NodeID: 1, PodsCount: int64(i)})
+			s.T.Logs.Append(logRow(ts, fmt.Sprintf("linha %d", i)))
+			if err := s.Flush(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	check := func(step string, wantRows, wantNodeFiles, wantLogFiles int) {
+		t.Helper()
+		rows, files := readTable[NodeSampleRow](t, s, "node_samples")
+		if len(rows) != wantRows || files != wantNodeFiles {
+			t.Fatalf("%s: node_samples com %d linhas em %d arquivos, esperado %d em %d", step, len(rows), files, wantRows, wantNodeFiles)
+		}
+		seen := map[int64]bool{}
+		for _, r := range rows {
+			if seen[r.PodsCount] {
+				t.Fatalf("%s: linha %d duplicada", step, r.PodsCount)
+			}
+			seen[r.PodsCount] = true
+		}
+		if logs, files := readTable[LogRow](t, s, "logs"); len(logs) != wantRows || files != wantLogFiles {
+			t.Fatalf("%s: logs com %d linhas em %d arquivos, esperado %d em %d", step, len(logs), files, wantRows, wantLogFiles)
+		}
+	}
+
+	// Poucos arquivos: a hora aberta fica como está
+	flush(0, openHourMinFiles-1)
+	s.now = func() time.Time { return start.Add(20 * time.Minute) }
+	if err := s.Maintain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check("abaixo do mínimo", openHourMinFiles-1, openHourMinFiles-1, openHourMinFiles-1)
+
+	// 12 flushes na hora aberta: node_samples ganha o compactado (os substituídos saem na execução seguinte)
+	flush(openHourMinFiles-1, 12)
+	if err := s.Maintain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check("hora aberta compactada", 12, 12+1, 12)
+	if err := s.Maintain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check("substituídos removidos", 12, 1, 12)
+
+	// Flushes depois da compactação valem junto com ela; a próxima junta tudo de novo
+	flush(12, 20)
+	check("flushes depois do compactado", 20, 1+8, 20)
+	s.now = func() time.Time { return start.Add(40 * time.Minute) }
+	for range 2 {
+		if err := s.Maintain(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check("hora aberta compactada de novo", 20, 1, 20)
+
+	// Hora fechada: os logs também viram um arquivo só
+	s.now = func() time.Time { return start.Add(time.Hour + closeGrace) }
+	for range 2 {
+		if err := s.Maintain(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check("hora fechada", 20, 1, 1)
+}
+
 // Tabelas que não são de logs: o dia fechado vira um arquivo só. Dias fora da retenção saem do storage.
 func TestDailyCompactionAndRetention(t *testing.T) {
 	ctx := context.Background()

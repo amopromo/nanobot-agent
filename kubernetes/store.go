@@ -26,6 +26,12 @@ import (
 // Uma hora (ou dia) só é compactada depois de fechada há closeGrace: o último flush dela já subiu.
 const closeGrace = 5 * time.Minute
 
+// Hora ainda aberta nas tabelas pequenas (as de compactação diária): com openHourMinFiles arquivos de flush ou mais,
+// a manutenção já junta a hora, para o Nanobot não baixar um arquivo por minuto (cada um custa uma requisição ao
+// storage). Os flushes seguintes continuam valendo (stamp maior) e entram na próxima. Logs não: o compactado é refeito
+// inteiro a cada vez e o Nanobot, que guarda os arquivos pelo nome, baixaria a hora toda de novo.
+const openHourMinFiles = 5
+
 type Store struct {
 	cfg      *Config
 	blob     Blob
@@ -260,16 +266,19 @@ func (s *Store) maintainTable(ctx context.Context, t anyTable, now time.Time, cu
 		default:
 			for _, h := range d.hours() {
 				hour := day.Add(time.Duration(h) * time.Hour)
-				if now.Sub(hour) < time.Hour+closeGrace {
-					continue
-				}
 				var scope []fileInfo
 				for _, f := range d.files {
 					if f.hour == h {
 						scope = append(scope, f)
 					}
 				}
-				errs = append(errs, s.compact(ctx, t, d, scope, d.effective(h), func(stamp int64) string {
+				eff := d.effective(h)
+				// Hora aberta: só nas tabelas pequenas, com arquivos de flush suficientes ou substituídos para apagar
+				if now.Sub(hour) < time.Hour+closeGrace &&
+					(!t.Daily() || (len(eff) < openHourMinFiles && len(scope) == len(eff))) {
+					continue
+				}
+				errs = append(errs, s.compact(ctx, t, d, scope, eff, func(stamp int64) string {
 					return s.prefix + fileKey(t.Name(), hour, stamp, true)
 				}))
 			}
