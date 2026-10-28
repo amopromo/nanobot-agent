@@ -85,8 +85,8 @@ CREATE SECRET (TYPE s3, KEY_ID '...', SECRET '...', REGION 'us-east-1', SCOPE 's
 
 -- últimas horas do dia de hoje (para períodos maiores, inclua os outros dias)
 SELECT w.name, avg(s.cpu_pct_request) AS cpu_pct, max(s.mem_pct_limit) AS mem_pct_limit
-FROM read_parquet('s3://meu-bucket/nanobot-k8s/prod1/pod_samples/dt=2026-10-20/**/*.parquet') s
-JOIN (SELECT DISTINCT id, name FROM read_parquet('s3://meu-bucket/nanobot-k8s/prod1/workloads/dt=2026-10-20/**/*.parquet')) w
+FROM read_parquet('s3://meu-bucket/nanobot-k8s/meu-cluster/pod_samples/dt=2026-10-20/**/*.parquet') s
+JOIN (SELECT DISTINCT id, name FROM read_parquet('s3://meu-bucket/nanobot-k8s/meu-cluster/workloads/dt=2026-10-20/**/*.parquet')) w
   ON w.id = s.workload_id
 WHERE s.ts >= now()::TIMESTAMP - INTERVAL 1 HOUR
 GROUP BY w.name ORDER BY cpu_pct DESC;
@@ -152,7 +152,7 @@ helm repo add nanobot https://raw.githubusercontent.com/amopromo/nanobot-agent/m
 helm repo update nanobot
 
 helm upgrade --install nanobot-k8s nanobot/nanobot-k8s-monitoring -n nanobot \
-  --set clusterName=prod1 \
+  --set clusterName=meu-cluster \
   --set storage.path=s3://meu-bucket/nanobot-k8s \
   --set credentials.existingSecret=nanobot-k8s-credentials
 ```
@@ -161,7 +161,7 @@ helm upgrade --install nanobot-k8s nanobot/nanobot-k8s-monitoring -n nanobot \
 - Atualizações: `helm repo update nanobot` e o mesmo `helm upgrade --install`. Versão fixa do chart: `--version 0.4.0`. Sem o RBAC de HPA (chart anterior com a imagem nova), o agente avisa no log e segue sem coletar HPAs.
 - Sem o repositório helm: `helm upgrade --install nanobot-k8s https://raw.githubusercontent.com/amopromo/nanobot-agent/main/charts/nanobot-k8s-monitoring-0.4.0.tgz ...` ou, com o repositório clonado, `kubernetes/helm/nanobot-k8s-monitoring`.
 
-Com vários clusters, guarde um arquivo de values por cluster (ex.: `values-prod1.yaml` com `clusterName`, `storage.path` e `logs.excludeNamespaces`) e use `-f values-prod1.yaml`.
+Com vários clusters, guarde um arquivo de values por cluster (ex.: `values-meu-cluster.yaml` com `clusterName`, `storage.path` e `logs.excludeNamespaces`) e use `-f values-meu-cluster.yaml`.
 
 ### 3. Conferir
 

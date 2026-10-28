@@ -18,7 +18,7 @@ curl -fL -o agent https://raw.githubusercontent.com/amopromo/nanobot-agent/main/
 # agente Kubernetes
 helm repo add nanobot https://raw.githubusercontent.com/amopromo/nanobot-agent/main/charts
 helm upgrade --install nanobot-k8s nanobot/nanobot-k8s-monitoring -n nanobot --create-namespace \
-  --set clusterName=prod1 --set storage.path=s3://meu-bucket/nanobot-k8s \
+  --set clusterName=meu-cluster --set storage.path=s3://meu-bucket/nanobot-k8s \
   --set credentials.existingSecret=nanobot-k8s-credentials
 ```
 
