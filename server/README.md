@@ -16,6 +16,17 @@ sudo ./agent -install -server="https://nanobot.exemplo.com/tasks/api/register/" 
   -apikey="CHAVE_DO_AGENTE" -server-name="servidor-app-01"
 ```
 
+**Script interativo (Linux):** baixa o binário da arquitetura da máquina, confere o SHA-256, pergunta as opções
+(URL do Nanobot, API keys, nome, frequência, portas, SSH, opções avançadas) e roda o `-install`. Com o agente já
+instalado, oferece o `-update`. A API key do agente, se não for informada, é gerada.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/amopromo/nanobot-agent/main/server-install.sh | sh
+# opções na linha de comando não são perguntadas (-y pula as confirmações):
+curl -fsSL https://raw.githubusercontent.com/amopromo/nanobot-agent/main/server-install.sh | sh -s -- \
+  -server="https://nanobot.exemplo.com" -reg-key="SUA_API_KEY" -server-name="servidor-app-01" -disable-ssh
+```
+
 | Binário | Sistema |
 |---|---|
 | [`bin/agent_linux_x64`](bin/agent_linux_x64) | Linux x86-64 |

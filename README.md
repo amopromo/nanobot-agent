@@ -12,7 +12,10 @@ O Nanobot gera os comandos de instalação dos dois agentes já preenchidos: **S
 **Admin > Kubernetes Clusters > Agent Install**.
 
 ```bash
-# agente dos servidores (Linux x86-64)
+# agente dos servidores (interativo: baixa, confere o SHA-256, pede as opções e instala)
+curl -fsSL https://raw.githubusercontent.com/amopromo/nanobot-agent/main/server-install.sh | sh
+
+# agente dos servidores (Linux x86-64, só o binário)
 curl -fL -o agent https://raw.githubusercontent.com/amopromo/nanobot-agent/main/server/bin/agent_linux_x64
 
 # agente Kubernetes (interativo: confirma o cluster, pede o storage e as chaves)

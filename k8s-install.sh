@@ -71,7 +71,7 @@ confirm() {
 # Escapa para string JSON (aspas e barras)
 json_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
-trap 'stty echo </dev/tty 2>/dev/null || true' EXIT INT TERM
+trap '{ stty echo </dev/tty; } 2>/dev/null || true' EXIT INT TERM
 
 ( : </dev/tty ) 2>/dev/null || die "sem terminal para as perguntas (rode num terminal interativo)"
 command -v kubectl >/dev/null 2>&1 || die "kubectl não encontrado"
