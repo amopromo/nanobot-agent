@@ -134,6 +134,14 @@ Com `encryption_key` (32 bytes aleatórios em base64, ex.: `openssl rand -base64
 
 A imagem está publicada em [`amopromo/nanobot-k8s-agent`](https://hub.docker.com/r/amopromo/nanobot-k8s-agent) (tag `latest`, linux/amd64), já configurada no `values.yaml` do chart. A partir do chart 0.3.0 (Parquet direto) a imagem precisa ser a nova: veja [Build da imagem](#build-da-imagem).
 
+### Script interativo
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/amopromo/nanobot-agent/main/k8s-install.sh | sh
+```
+
+O [`k8s-install.sh`](../k8s-install.sh) confirma o contexto do kubectl (cluster), pergunta namespace, nome do cluster, provedor (S3, GCS, R2 ou S3 compatível), região/account ID, endpoint custom opcional, bucket, prefixo e as chaves, gera a `encryption_key` (ou usa a informada), cria o Secret e roda o `helm upgrade --install`. No fim mostra os dados para o cadastro no Nanobot. Precisa de `kubectl` e `helm`. Os passos abaixo são o mesmo, à mão.
+
 ### 1. Credenciais
 
 Crie o `credentials.json` (seção [Credenciais](#credenciais-do-storage)) e o Secret, fora do values para as chaves não irem parar no histórico do helm:

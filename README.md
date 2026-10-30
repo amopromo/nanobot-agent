@@ -15,7 +15,10 @@ O Nanobot gera os comandos de instalação dos dois agentes já preenchidos: **S
 # agente dos servidores (Linux x86-64)
 curl -fL -o agent https://raw.githubusercontent.com/amopromo/nanobot-agent/main/server/bin/agent_linux_x64
 
-# agente Kubernetes
+# agente Kubernetes (interativo: confirma o cluster, pede o storage e as chaves)
+curl -fsSL https://raw.githubusercontent.com/amopromo/nanobot-agent/main/k8s-install.sh | sh
+
+# agente Kubernetes (helm)
 helm repo add nanobot https://raw.githubusercontent.com/amopromo/nanobot-agent/main/charts
 helm upgrade --install nanobot-k8s nanobot/nanobot-k8s-monitoring -n nanobot --create-namespace \
   --set clusterName=meu-cluster --set storage.path=s3://meu-bucket/nanobot-k8s \
